@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>🏇 うまレース DX</title>
+<style>
+  :root {
+    --gold: #ffd54a;
+    --silver: #c9d1d9;
+    --bronze: #cd7f32;
+    --bg-deep: #0f1924;
+    --bg-mid: #1a2a3a;
+    --accent: #ff6b35;
+    --accent2: #4ecdc4;
+    --text: #f0f4f8;
+    --muted: #8aa0b4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "Hiragino Sans", "Yu Gothic", "Helvetica Neue", sans-serif;
+    background: radial-gradient(ellipse at top, #1e3a5f 0%, var(--bg-deep) 100%);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    background: rgba(0,0,0,0.4);
+    border-bottom: 2px solid var(--accent);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+  header h1 {
+    font-size: 1.4rem;
+    background: linear-gradient(90deg, var(--gold), var(--accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: 2px;
+    font-weight: 900;
+  }
+  .hud { display: flex; gap: 24px; align-items: center; font-size: 0.95rem; }
+  .hud .item { display: flex; flex-direction: column; align-items: flex-end; }
+  .hud .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: bold; font-size: 1.1rem; color: var(--gold); }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 12px;
+    padding: 12px;
+    min-height: 0;
+  }
+
+  .sidebar {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 14px;
+    overflow-y: auto;
+    backdrop-filter: blur(8px);
+  }
+  .sidebar h2 {
+    font-size: 0.85rem;
+    color: var(--accent2);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(78,205,196,0.3);
+    padding-bottom: 6px;
+  }
+  .horse-card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .horse-card:hover { background: rgba(255,255,255,0.12); transform: translateX(2px); }
+  .horse-card.selected {
+    background: rgba(255,213,74,0.18);
+    border-color: var(--gold);
+    box-shadow: 0 0 12px rgba(255,213,74,0.3);
+  }
+  .horse-card .hc-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .horse-card .num {
+    display: inline-block;
+    width: 22px; height: 22px;
+    border-radius: 4px;
+    font-weight: 900; font-size: 0.85rem;
+    text-align: center; line-height: 22px;
+    color: #000;
+  }
+  .horse-card .name { font-weight: bold; margin-left: 6px; }
+  .horse-card .odds {
+    font-family: "Courier New", monospace;
+    font-weight: bold;
+    color: var(--gold);
+    font-size: 1rem;
+  }
+  .horse-card .style {
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+  .stat-bar { display: flex; align-items: center; gap: 6px; margin: 2px 0; font-size: 0.7rem; }
+  .stat-bar .stat-label { width: 36px; color: var(--muted); }
+  .stat-bar .bar { flex: 1; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
+  .stat-bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--gold)); border-radius: 2px; }
+
+  .bet-panel {
+    margin-top: 14px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .bet-panel label { font-size: 0.75rem; color: var(--muted); display: block; margin-bottom: 4px; }
+  .bet-panel input[type="number"] {
+    width: 100%;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: var(--text);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: bold;
+  }
+  .chips { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; }
+  .chip {
+    flex: 1;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--text);
+    padding: 6px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: bold;
+    transition: all 0.1s;
+  }
+  .chip:hover { background: var(--accent); border-color: var(--accent); }
+
+  button.primary {
+    width: 100%;
+    background: linear-gradient(135deg, var(--accent) 0%, #ff8c5a 100%);
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 10px;
+    letter-spacing: 1px;
+    transition: transform 0.1s, box-shadow 0.15s;
+    box-shadow: 0 4px 12px rgba(255,107,53,0.3);
+  }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255,107,53,0.5); }
+  button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .arena {
+    background: rgba(0,0,0,0.3);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    flex-direction: column;
+  }
+  #canvas { width: 100%; flex: 1; display: block; }
+
+  .commentary {
+    position: absolute;
+    bottom: 10px; left: 10px; right: 10px;
+    background: rgba(0,0,0,0.7);
+    border-left: 3px solid var(--accent);
+    padding: 8px 14px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    backdrop-filter: blur(4px);
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.3s;
+  }
+  .commentary.show { opacity: 1; }
+  .commentary.hide { opacity: 0; }
+
+  .position-board {
+    position: absolute;
+    top: 10px; right: 10px;
+    background: rgba(0,0,0,0.65);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    min-width: 140px;
+    backdrop-filter: blur(4px);
+  }
+  .position-board .title { color: var(--accent2); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .position-board .row { display: flex; align-items: center; padding: 2px 0; gap: 6px; }
+  .position-board .pos-num { width: 16px; height: 16px; border-radius: 3px; font-size: 0.7rem; line-height: 16px; text-align: center; color: #000; font-weight: 900; }
+
+  .countdown {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 8rem;
+    font-weight: 900;
+    color: var(--gold);
+    text-shadow: 0 0 30px rgba(255,213,74,0.7), 4px 4px 0 rgba(0,0,0,0.5);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  .countdown.show { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+
+  .result-modal {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(6px);
+    z-index: 10;
+  }
+  .result-modal.show { display: flex; }
+  .result-card {
+    background: linear-gradient(135deg, var(--bg-mid), var(--bg-deep));
+    border: 2px solid var(--gold);
+    border-radius: 16px;
+    padding: 28px 40px;
+    min-width: 380px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .result-card h2 {
+    text-align: center;
+    font-size: 2rem;
+    background: linear-gradient(90deg, var(--gold), var(--accent));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    margin-bottom: 16px;
+  }
+  .podium { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .podium .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 6px;
+  }
+  .podium .row.gold { background: rgba(255,213,74,0.15); border: 1px solid var(--gold); }
+  .podium .row.silver { background: rgba(201,209,217,0.1); }
+  .podium .row.bronze { background: rgba(205,127,50,0.1); }
+  .medal { font-size: 1.5rem; width: 32px; }
+  .podium .nm { flex: 1; font-weight: bold; }
+  .podium .tm { font-family: "Courier New", monospace; color: var(--muted); font-size: 0.85rem; }
+
+  .payout {
+    background: rgba(0,0,0,0.4);
+    border-radius: 8px;
+    padding: 12px 16px;
+    text-align: center;
+    margin-bottom: 12px;
+  }
+  .payout .big { font-size: 1.8rem; font-weight: 900; }
+  .payout .big.win { color: #4caf50; }
+  .payout .big.lose { color: #e74c3c; }
+  .payout .sm { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+
+  .toggle-music {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  /* Scrollbar */
+  .sidebar::-webkit-scrollbar { width: 6px; }
+  .sidebar::-webkit-scrollbar-track { background: transparent; }
+  .sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🏇 うまレース DX</h1>
+    <div class="hud">
+      <div class="item"><span class="label">第</span><span class="value" id="raceNum">1</span></div>
+      <div class="item"><span class="label">距離</span><span class="value" id="distance">1600m</span></div>
+      <div class="item"><span class="label">天候</span><span class="value" id="weather">☀️ 晴</span></div>
+      <div class="item"><span class="label">所持金</span><span class="value" id="money">¥10,000</span></div>
+      <button class="toggle-music" id="muteBtn">🔊 音 ON</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="sidebar">
+      <h2>出走表</h2>
+      <div id="horseList"></div>
+
+      <div class="bet-panel">
+        <h2 style="margin-top:0">単勝予想</h2>
+        <label>賭け金 (¥)</label>
+        <input type="number" id="betAmount" value="500" min="100" step="100">
+        <div class="chips">
+          <button class="chip" data-amt="100">+100</button>
+          <button class="chip" data-amt="500">+500</button>
+          <button class="chip" data-amt="1000">+1k</button>
+          <button class="chip" data-amt="5000">+5k</button>
+        </div>
+        <button class="primary" id="startBtn">スタート</button>
+      </div>
+    </aside>
+
+    <div class="arena">
+      <canvas id="canvas"></canvas>
+      <div class="position-board" id="posBoard">
+        <div class="title">順位</div>
+        <div id="posRows"></div>
+      </div>
+      <div class="commentary hide" id="commentary">準備完了。馬を選んで賭けてください。</div>
+      <div class="countdown" id="countdown"></div>
+
+      <div class="result-modal" id="resultModal">
+        <div class="result-card">
+          <h2 id="resultTitle">🏆 RESULT 🏆</h2>
+          <div class="podium" id="podium"></div>
+          <div class="payout" id="payoutBox"></div>
+          <button class="primary" id="nextRaceBtn">次のレースへ</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+<script>
+"use strict";
+
+// ============ Game State ============
+const STATE = {
+  money: 10000,
+  raceNum: 1,
+  selectedHorse: null,
+  betAmount: 500,
+  horses: [],
+  running: false,
+  raceDistance: 1600,
+  weather: { name: "☀️ 晴", muddy: 0 },
+  audioOn: true,
+  audioCtx: null,
+};
+
+const HORSE_POOL = [
+  { name: "サクラブレイド",     color: "#e91e63", jockey: "#ffeb3b" },
+  { name: "カミナリオウ",       color: "#ffc107", jockey: "#1976d2" },
+  { name: "ハヤテツバサ",       color: "#3f51b5", jockey: "#f44336" },
+  { name: "アラシノコウテイ",   color: "#4caf50", jockey: "#fff" },
+  { name: "ホシノカケラ",       color: "#9c27b0", jockey: "#ff9800" },
+  { name: "ユキノセンプウ",     color: "#00bcd4", jockey: "#e91e63" },
+  { name: "ダイヤモンドアロー", color: "#ff5722", jockey: "#000" },
+  { name: "ゴールデンルナ",     color: "#ffd54a", jockey: "#311b92" },
+];
+
+const STYLES = [
+  { id: "nige", label: "逃げ",   curve: t => t < 0.3 ? 1.12 : (t < 0.7 ? 1.0 : 0.88) },
+  { id: "senko", label: "先行",  curve: t => t < 0.5 ? 1.05 : (t < 0.85 ? 1.0 : 0.95) },
+  { id: "sashi", label: "差し",  curve: t => t < 0.5 ? 0.94 : (t < 0.85 ? 1.05 : 1.12) },
+  { id: "oikomi", label: "追込", curve: t => t < 0.7 ? 0.88 : 1.22 },
+];
+
+const WEATHERS = [
+  { name: "☀️ 晴", muddy: 0 },
+  { name: "⛅ 曇", muddy: 0.05 },
+  { name: "🌧️ 雨", muddy: 0.15 },
+  { name: "⛈️ 重", muddy: 0.25 },
+];
+const DISTANCES = [1200, 1400, 1600, 1800, 2000, 2400];
+
+// ============ Utilities ============
+const rand = (min, max) => Math.random() * (max - min) + min;
+const randInt = (min, max) => Math.floor(rand(min, max + 1));
+const choice = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const fmt = n => "¥" + Math.round(n).toLocaleString("ja-JP");
+
+// ============ Audio (WebAudio simple beeps) ============
+function audio() {
+  if (!STATE.audioOn) return null;
+  if (!STATE.audioCtx) STATE.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return STATE.audioCtx;
+}
+function beep(freq, dur = 0.12, type = "sine", vol = 0.15) {
+  const ctx = audio(); if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(); osc.stop(ctx.currentTime + dur);
+}
+function fanfare() {
+  if (!STATE.audioOn) return;
+  [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.25, "triangle", 0.18), i * 130));
+}
+function gallopTick() {
+  if (!STATE.audioOn) return;
+  beep(80 + Math.random() * 30, 0.05, "square", 0.04);
+}
+
+// ============ Horse creation ============
+function makeHorses() {
+  const pool = [...HORSE_POOL].sort(() => Math.random() - 0.5).slice(0, 6);
+  return pool.map((p, i) => {
+    const style = choice(STYLES);
+    const speed = rand(0.80, 1.0);
+    const stamina = rand(0.7, 1.0);
+    const accel = rand(0.7, 1.0);
+    const cond = rand(0.85, 1.05); // today's form
+    return {
+      idx: i,
+      num: i + 1,
+      name: p.name,
+      color: p.color,
+      jockey: p.jockey,
+      style: style,
+      speed, stamina, accel, cond,
+      // odds computed later
+      odds: 0,
+      // race-time
+      pos: 0,
+      vel: 0,
+      stam: 100,
+      finished: false,
+      finishTime: 0,
+      legPhase: Math.random() * Math.PI * 2,
+      bob: 0,
+    };
+  });
+}
+
+function computeOdds(horses) {
+  // strength score
+  const scores = horses.map(h => h.speed * 0.45 + h.stamina * 0.30 + h.accel * 0.15 + h.cond * 0.10);
+  const total = scores.reduce((a, b) => a + b, 0);
+  horses.forEach((h, i) => {
+    const prob = scores[i] / total;
+    // implied odds with ~20% house edge
+    h.odds = clamp(0.8 / prob, 1.2, 99.9);
+    h.odds = Math.round(h.odds * 10) / 10;
+  });
+}
+
+// ============ Rendering ============
+const cvs = document.getElementById("canvas");
+const ctx = cvs.getContext("2d");
+let W = 0, H = 0;
+function resize() {
+  const r = cvs.getBoundingClientRect();
+  cvs.width = r.width * devicePixelRatio;
+  cvs.height = r.height * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  W = r.width; H = r.height;
+}
+window.addEventListener("resize", resize);
+
+const PX_PER_M = 0.5; // canvas pixels per meter
+let cameraX = 0;
+let particles = [];
+
+function spawnDust(x, y, color) {
+  particles.push({
+    x, y,
+    vx: rand(-0.5, -0.1),
+    vy: rand(-0.3, -1),
+    life: 1,
+    size: rand(2, 5),
+    color,
+  });
+}
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.04;
+    p.life -= dt * 1.2;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = clamp(p.life, 0, 1) * 0.7;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x - cameraX, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawBackground(time) {
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.6);
+  sky.addColorStop(0, "#3a5d8a");
+  sky.addColorStop(1, "#f0a070");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H * 0.55);
+
+  // Sun
+  ctx.fillStyle = "rgba(255,220,150,0.7)";
+  ctx.beginPath();
+  ctx.arc(W * 0.78, H * 0.18, 36, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Far mountains (parallax 0.1)
+  ctx.fillStyle = "#2c3e50";
+  ctx.beginPath();
+  const mtnOff = (cameraX * 0.1) % 200;
+  for (let x = -mtnOff - 200; x < W + 200; x += 200) {
+    ctx.moveTo(x, H * 0.55);
+    ctx.lineTo(x + 100, H * 0.30);
+    ctx.lineTo(x + 200, H * 0.55);
+  }
+  ctx.fill();
+
+  // Near hills (parallax 0.3)
+  ctx.fillStyle = "#1e5837";
+  ctx.beginPath();
+  const hillOff = (cameraX * 0.3) % 160;
+  for (let x = -hillOff - 160; x < W + 160; x += 160) {
+    ctx.moveTo(x, H * 0.62);
+    ctx.quadraticCurveTo(x + 80, H * 0.42, x + 160, H * 0.62);
+  }
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.fill();
+
+  // Grandstand (parallax 0.5)
+  const standOff = (cameraX * 0.5) % 120;
+  for (let x = -standOff - 120; x < W + 120; x += 120) {
+    ctx.fillStyle = "#3a4555";
+    ctx.fillRect(x, H * 0.50, 100, H * 0.13);
+    ctx.fillStyle = "#e74c3c";
+    ctx.fillRect(x, H * 0.50, 100, 6);
+    // tiny crowd dots
+    for (let cy = 0; cy < 4; cy++) {
+      for (let cx = 0; cx < 8; cx++) {
+        ctx.fillStyle = `hsl(${(x + cx * 17 + cy * 31) % 360}, 60%, 55%)`;
+        ctx.fillRect(x + 6 + cx * 12, H * 0.51 + cy * 16, 6, 6);
+      }
+    }
+  }
+
+  // Inner field (grass)
+  ctx.fillStyle = "#3a7d44";
+  ctx.fillRect(0, H * 0.62, W, H * 0.08);
+
+  // Inner rail
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, H * 0.70);
+  ctx.lineTo(W, H * 0.70);
+  ctx.stroke();
+
+  // Track surface
+  const trackY = H * 0.70;
+  const trackH = H * 0.28;
+  const baseColor = STATE.weather.muddy > 0.15 ? "#6b4f3a" : "#c9a06b";
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, trackY, W, trackH);
+
+  // Track texture lines (showing motion)
+  ctx.strokeStyle = "rgba(0,0,0,0.1)";
+  ctx.lineWidth = 1;
+  const stripeOff = cameraX % 40;
+  for (let x = -stripeOff; x < W; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, trackY + 4);
+    ctx.lineTo(x + 20, trackY + trackH - 4);
+    ctx.stroke();
+  }
+
+  // Distance markers (every 200m)
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.font = "bold 10px monospace";
+  const totalPx = STATE.raceDistance * PX_PER_M;
+  for (let m = 0; m <= STATE.raceDistance; m += 200) {
+    const mx = m * PX_PER_M - cameraX + 100;
+    if (mx > -30 && mx < W + 30) {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(mx, trackY - 8, 2, 8);
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.fillText((STATE.raceDistance - m) + "m", mx + 4, trackY - 1);
+    }
+  }
+
+  // Goal post
+  const goalX = totalPx - cameraX + 100;
+  if (goalX > -50 && goalX < W + 50) {
+    // Pole
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(goalX - 2, trackY - 60, 4, 60);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(goalX - 2, trackY - 55, 4, 6);
+    ctx.fillRect(goalX - 2, trackY - 45, 4, 6);
+    ctx.fillRect(goalX - 2, trackY - 35, 4, 6);
+    // Banner
+    ctx.fillStyle = "#e74c3c";
+    ctx.fillRect(goalX - 20, trackY - 70, 40, 12);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("GOAL", goalX, trackY - 61);
+    ctx.textAlign = "left";
+    // Finish line on track
+    ctx.fillStyle = "#fff";
+    for (let y = 0; y < trackH; y += 8) {
+      ctx.fillRect(goalX - 2, trackY + y, 4, 4);
+      ctx.fillStyle = ((y / 8) % 2 === 0) ? "#000" : "#fff";
+    }
+  }
+
+  // Start line (only visible at start)
+  if (cameraX < 200) {
+    const startX = 100 - cameraX;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(startX - 2, trackY, 4, trackH);
+  }
+}
+
+function drawHorse(h, time) {
+  const lanes = STATE.horses.length;
+  const trackY = H * 0.70;
+  const trackH = H * 0.28;
+  const laneH = trackH / lanes;
+  const baseY = trackY + laneH * h.idx + laneH * 0.5 + 4;
+  const screenX = h.pos * PX_PER_M - cameraX + 100;
+  if (screenX < -60 || screenX > W + 60) return;
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(screenX, baseY + 14, 22, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const x = screenX;
+  const speedFactor = clamp(h.vel / 15, 0.3, 1.5);
+  h.legPhase += speedFactor * 0.5;
+  const phase = Math.sin(h.legPhase);
+  const phase2 = Math.sin(h.legPhase + Math.PI);
+  const bob = Math.abs(Math.sin(h.legPhase * 2)) * 1.5;
+  const y = baseY - bob;
+
+  // Tail
+  ctx.strokeStyle = darken(h.color, 0.6);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x - 22, y - 4);
+  ctx.quadraticCurveTo(x - 30 + Math.sin(time * 4) * 2, y - 8, x - 36, y + 2);
+  ctx.stroke();
+
+  // Back legs
+  ctx.strokeStyle = darken(h.color, 0.7);
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - 14, y + 6);
+  ctx.lineTo(x - 14 + phase * 6, y + 18);
+  ctx.moveTo(x - 8, y + 6);
+  ctx.lineTo(x - 8 + phase2 * 6, y + 18);
+  ctx.stroke();
+
+  // Body
+  ctx.fillStyle = h.color;
+  ctx.beginPath();
+  ctx.ellipse(x, y, 22, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Front legs
+  ctx.strokeStyle = darken(h.color, 0.7);
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y + 6);
+  ctx.lineTo(x + 10 + phase2 * 6, y + 18);
+  ctx.moveTo(x + 16, y + 6);
+  ctx.lineTo(x + 16 + phase * 6, y + 18);
+  ctx.stroke();
+
+  // Neck
+  ctx.fillStyle = h.color;
+  ctx.beginPath();
+  ctx.ellipse(x + 16, y - 8, 6, 11, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mane
+  ctx.fillStyle = darken(h.color, 0.5);
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y - 10);
+  ctx.lineTo(x + 14, y - 16);
+  ctx.lineTo(x + 17, y - 12);
+  ctx.lineTo(x + 20, y - 16);
+  ctx.lineTo(x + 22, y - 10);
+  ctx.closePath();
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = h.color;
+  ctx.beginPath();
+  ctx.ellipse(x + 25, y - 14, 8, 5, 0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(x + 27, y - 15, 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.arc(x + 27.5, y - 15, 0.9, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Nostril
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.arc(x + 31, y - 12, 0.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Jockey body
+  ctx.fillStyle = h.jockey;
+  ctx.beginPath();
+  ctx.ellipse(x + 2, y - 12, 7, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Stripe
+  ctx.fillStyle = darken(h.jockey, 0.4);
+  ctx.fillRect(x - 1, y - 17, 6, 2);
+
+  // Jockey helmet
+  ctx.fillStyle = h.color;
+  ctx.beginPath();
+  ctx.arc(x + 2, y - 19, 5, Math.PI, 0);
+  ctx.fill();
+  // Helmet visor
+  ctx.fillStyle = "#000";
+  ctx.fillRect(x - 3, y - 19, 10, 1.5);
+
+  // Jockey number on body
+  ctx.fillStyle = "#000";
+  ctx.font = "bold 8px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(h.num, x + 2, y - 9);
+  ctx.textAlign = "left";
+
+  // Spawn dust occasionally
+  if (h.vel > 5 && Math.random() < 0.4) {
+    const dustColor = STATE.weather.muddy > 0.15 ? "#6b4f3a" : "#d4b08a";
+    spawnDust(h.pos * PX_PER_M + 100 - 16, baseY + 14, dustColor);
+  }
+}
+
+function darken(hex, factor) {
+  // hex like "#rrggbb"
+  const m = hex.match(/^#?([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})$/i);
+  if (!m) return hex;
+  const r = Math.floor(parseInt(m[1], 16) * factor);
+  const g = Math.floor(parseInt(m[2], 16) * factor);
+  const b = Math.floor(parseInt(m[3], 16) * factor);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ============ Simulation ============
+let raceStartTime = 0;
+let elapsedSec = 0;
+let gallopAccum = 0;
+
+function tickSim(dt) {
+  if (!STATE.running) return;
+  elapsedSec += dt;
+  const total = STATE.raceDistance;
+
+  STATE.horses.forEach(h => {
+    if (h.finished) return;
+    const t = h.pos / total;
+    const styleMul = h.style.curve(t);
+    // weather effect
+    const weatherMul = 1 - STATE.weather.muddy * (1 - h.stamina * 0.5);
+    // stamina fatigue
+    const stamMul = 0.6 + 0.4 * (h.stam / 100);
+    // target velocity
+    const target = 12 * h.speed * h.cond * styleMul * weatherMul * stamMul;
+    // accelerate towards target
+    h.vel = lerp(h.vel, target + rand(-0.6, 0.6), dt * 2 * h.accel);
+    h.vel = Math.max(0, h.vel);
+    h.pos += h.vel * dt * 10; // scale up so race lasts ~30-50s
+    // stamina decay
+    h.stam -= dt * (3 + (h.vel - 9) * 1.2) * (1 / h.stamina);
+    h.stam = clamp(h.stam, 0, 100);
+    if (h.pos >= total) {
+      h.pos = total;
+      h.finished = true;
+      h.finishTime = elapsedSec;
+    }
+  });
+
+  // Camera follows leader
+  const leader = [...STATE.horses].sort((a, b) => b.pos - a.pos)[0];
+  const targetCam = clamp(leader.pos * PX_PER_M - W * 0.55, 0, STATE.raceDistance * PX_PER_M - W + 200);
+  cameraX = lerp(cameraX, targetCam, 0.08);
+
+  // Gallop sound
+  gallopAccum += dt;
+  if (gallopAccum > 0.12) {
+    gallopAccum = 0;
+    gallopTick();
+  }
+
+  // All finished?
+  if (STATE.horses.every(h => h.finished)) {
+    finishRace();
+  }
+}
+
+// ============ Commentary ============
+const COMM = {
+  start: ["スタートしました！", "一斉にゲートが開いた！", "号砲！全馬好スタート！"],
+  early: ["{lead} が先頭！", "{lead} がハナを取る！", "{lead} が好位！"],
+  mid: ["勝負どころは第4コーナー！", "中団から {pos2} が押し上げる！", "{lead} まだ余裕の手応え！", "後方から {tail} 大外を回す！"],
+  late: ["残り {rem}m！", "{lead} と {pos2} の競り合い！", "ムチが入った！", "ここから一気の追い込み！"],
+  finish: ["ゴール！", "鼻差の勝負！", "歴史的な瞬間！"],
+};
+const commEl = document.getElementById("commentary");
+let lastCommentary = 0;
+function pickComment() {
+  if (!STATE.running) return;
+  if (elapsedSec - lastCommentary < 3) return;
+  lastCommentary = elapsedSec;
+  const sorted = [...STATE.horses].sort((a, b) => b.pos - a.pos);
+  const lead = sorted[0];
+  const t = lead.pos / STATE.raceDistance;
+  let pool;
+  if (elapsedSec < 1.5) pool = COMM.start;
+  else if (t < 0.4) pool = COMM.early;
+  else if (t < 0.75) pool = COMM.mid;
+  else pool = COMM.late;
+  let text = choice(pool);
+  text = text.replace("{lead}", lead.name)
+             .replace("{pos2}", (sorted[1] || lead).name)
+             .replace("{tail}", sorted[sorted.length - 1].name)
+             .replace("{rem}", Math.max(0, Math.round(STATE.raceDistance - lead.pos)));
+  commEl.textContent = "📢 " + text;
+  commEl.classList.add("show"); commEl.classList.remove("hide");
+}
+
+// ============ UI ============
+function renderHud() {
+  document.getElementById("raceNum").textContent = STATE.raceNum;
+  document.getElementById("distance").textContent = STATE.raceDistance + "m";
+  document.getElementById("weather").textContent = STATE.weather.name;
+  document.getElementById("money").textContent = fmt(STATE.money);
+}
+
+function renderHorseList() {
+  const wrap = document.getElementById("horseList");
+  wrap.innerHTML = "";
+  STATE.horses.forEach((h, i) => {
+    const card = document.createElement("div");
+    card.className = "horse-card" + (STATE.selectedHorse === i ? " selected" : "");
+    card.dataset.idx = i;
+    card.innerHTML = `
+      <div class="hc-top">
+        <div>
+          <span class="num" style="background:${h.color}">${h.num}</span>
+          <span class="name">${h.name}</span>
+          <span class="style">[${h.style.label}]</span>
+        </div>
+        <div class="odds">${h.odds.toFixed(1)}</div>
+      </div>
+      <div class="stat-bar"><span class="stat-label">速度</span><div class="bar"><div class="fill" style="width:${(h.speed*100).toFixed(0)}%"></div></div></div>
+      <div class="stat-bar"><span class="stat-label">持久</span><div class="bar"><div class="fill" style="width:${(h.stamina*100).toFixed(0)}%"></div></div></div>
+      <div class="stat-bar"><span class="stat-label">瞬発</span><div class="bar"><div class="fill" style="width:${(h.accel*100).toFixed(0)}%"></div></div></div>
+      <div class="stat-bar"><span class="stat-label">調子</span><div class="bar"><div class="fill" style="width:${clamp(h.cond * 90, 30, 100).toFixed(0)}%"></div></div></div>
+    `;
+    card.addEventListener("click", () => {
+      if (STATE.running) return;
+      STATE.selectedHorse = i;
+      renderHorseList();
+      beep(660, 0.06);
+    });
+    wrap.appendChild(card);
+  });
+}
+
+function renderPositions() {
+  const sorted = [...STATE.horses].sort((a, b) => {
+    if (a.finished && b.finished) return a.finishTime - b.finishTime;
+    if (a.finished) return -1;
+    if (b.finished) return 1;
+    return b.pos - a.pos;
+  });
+  const rows = document.getElementById("posRows");
+  rows.innerHTML = sorted.map((h, i) => `
+    <div class="row">
+      <span style="color:var(--muted);width:18px">${i+1}</span>
+      <span class="pos-num" style="background:${h.color}">${h.num}</span>
+      <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h.name}</span>
+    </div>
+  `).join("");
+}
+
+function showCountdown(text) {
+  const el = document.getElementById("countdown");
+  el.textContent = text;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 600);
+}
+
+// ============ Race flow ============
+function newRace() {
+  STATE.horses = makeHorses();
+  computeOdds(STATE.horses);
+  STATE.selectedHorse = null;
+  STATE.raceDistance = choice(DISTANCES);
+  STATE.weather = choice(WEATHERS);
+  cameraX = 0;
+  elapsedSec = 0;
+  particles = [];
+  renderHud();
+  renderHorseList();
+  renderPositions();
+  commEl.textContent = "出走馬を選んで賭けてください。";
+  commEl.classList.add("show");
+}
+
+async function startRace() {
+  if (STATE.selectedHorse == null) {
+    commEl.textContent = "⚠️ 馬を選んでください";
+    return;
+  }
+  const bet = parseInt(document.getElementById("betAmount").value) || 0;
+  if (bet < 100) { commEl.textContent = "⚠️ 賭け金は¥100以上"; return; }
+  if (bet > STATE.money) { commEl.textContent = "⚠️ 所持金が足りません"; return; }
+  STATE.betAmount = bet;
+  STATE.money -= bet;
+  renderHud();
+  document.getElementById("startBtn").disabled = true;
+
+  // Resume audio (browser policy)
+  if (STATE.audioCtx && STATE.audioCtx.state === "suspended") STATE.audioCtx.resume();
+
+  // Countdown
+  for (let n = 3; n >= 1; n--) {
+    showCountdown(String(n));
+    beep(440 + (3 - n) * 80, 0.2, "triangle", 0.25);
+    await sleep(700);
+  }
+  showCountdown("GO!");
+  beep(880, 0.4, "square", 0.3);
+  STATE.running = true;
+  raceStartTime = performance.now();
+  elapsedSec = 0;
+  lastCommentary = -10;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function finishRace() {
+  STATE.running = false;
+  const sorted = [...STATE.horses].sort((a, b) => a.finishTime - b.finishTime);
+  const winnerIdx = sorted[0].idx;
+  const won = winnerIdx === STATE.selectedHorse;
+  const payout = won ? Math.round(STATE.betAmount * STATE.horses[STATE.selectedHorse].odds) : 0;
+  STATE.money += payout;
+  fanfare();
+  renderHud();
+  showResult(sorted, won, payout);
+}
+
+function showResult(sorted, won, payout) {
+  const modal = document.getElementById("resultModal");
+  const podium = document.getElementById("podium");
+  const payBox = document.getElementById("payoutBox");
+  document.getElementById("resultTitle").textContent = won ? "🎉 的中！ 🎉" : "🏁 RESULT 🏁";
+  podium.innerHTML = sorted.map((h, i) => {
+    const cls = ["gold","silver","bronze"][i] || "";
+    const medal = ["🥇","🥈","🥉","4","5","6","7","8"][i];
+    return `<div class="row ${cls}">
+      <div class="medal">${medal}</div>
+      <span class="pos-num" style="background:${h.color}">${h.num}</span>
+      <div class="nm">${h.name}</div>
+      <div class="tm">${h.finishTime.toFixed(2)}s</div>
+    </div>`;
+  }).join("");
+  if (won) {
+    payBox.innerHTML = `
+      <div class="big win">+${fmt(payout - STATE.betAmount)}</div>
+      <div class="sm">${fmt(STATE.betAmount)} × ${STATE.horses[STATE.selectedHorse].odds.toFixed(1)} = ${fmt(payout)}</div>`;
+  } else {
+    payBox.innerHTML = `
+      <div class="big lose">-${fmt(STATE.betAmount)}</div>
+      <div class="sm">またのチャレンジを！</div>`;
+  }
+  modal.classList.add("show");
+}
+
+document.getElementById("nextRaceBtn").addEventListener("click", () => {
+  document.getElementById("resultModal").classList.remove("show");
+  STATE.raceNum += 1;
+  if (STATE.money < 100) STATE.money = 10000; // safety reset
+  newRace();
+  document.getElementById("startBtn").disabled = false;
+});
+
+document.getElementById("startBtn").addEventListener("click", startRace);
+
+document.querySelectorAll(".chip").forEach(c => {
+  c.addEventListener("click", () => {
+    const inp = document.getElementById("betAmount");
+    inp.value = Math.max(100, (parseInt(inp.value) || 0) + parseInt(c.dataset.amt));
+    beep(880, 0.04);
+  });
+});
+
+document.getElementById("muteBtn").addEventListener("click", (e) => {
+  STATE.audioOn = !STATE.audioOn;
+  e.target.textContent = STATE.audioOn ? "🔊 音 ON" : "🔇 音 OFF";
+});
+
+// ============ Main loop ============
+let lastTime = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+
+  tickSim(dt);
+  updateParticles(dt);
+  pickComment();
+  if (STATE.running) renderPositions();
+
+  ctx.clearRect(0, 0, W, H);
+  drawBackground(now / 1000);
+  // Draw horses sorted by lane so visual order is consistent
+  STATE.horses.forEach(h => drawHorse(h, now / 1000));
+  drawParticles();
+
+  requestAnimationFrame(loop);
+}
+
+// ============ Boot ============
+resize();
+newRace();
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
