@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>🏇 うまレース DX</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🏇 うまレース DX 3D</title>
 <style>
   :root {
     --gold: #ffd54a;
@@ -168,7 +169,7 @@
   button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .arena {
-    background: rgba(0,0,0,0.3);
+    background: #0a1018;
     border-radius: 12px;
     overflow: hidden;
     position: relative;
@@ -177,6 +178,15 @@
     flex-direction: column;
   }
   #canvas { width: 100%; flex: 1; display: block; }
+
+  /* cinematic vignette + letterbox feel */
+  .arena::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 120px 20px rgba(0,0,0,0.55);
+    border-radius: 12px;
+  }
 
   .commentary {
     position: absolute;
@@ -192,6 +202,7 @@
     display: flex;
     align-items: center;
     transition: opacity 0.3s;
+    z-index: 3;
   }
   .commentary.show { opacity: 1; }
   .commentary.hide { opacity: 0; }
@@ -205,6 +216,7 @@
     font-size: 0.8rem;
     min-width: 140px;
     backdrop-filter: blur(4px);
+    z-index: 3;
   }
   .position-board .title { color: var(--accent2); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
   .position-board .row { display: flex; align-items: center; padding: 2px 0; gap: 6px; }
@@ -221,6 +233,7 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.2s, transform 0.2s;
+    z-index: 4;
   }
   .countdown.show { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
 
@@ -285,6 +298,31 @@
     font-size: 0.75rem;
     cursor: pointer;
   }
+  .cam-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .loading, .errbox {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 10px;
+    color: var(--muted); font-size: 0.95rem;
+    z-index: 6; text-align: center; padding: 20px;
+  }
+  .errbox { color: #ff8c8c; display: none; }
+  .spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Scrollbar */
   .sidebar::-webkit-scrollbar { width: 6px; }
@@ -294,12 +332,13 @@
 </head>
 <body>
   <header>
-    <h1>🏇 うまレース DX</h1>
+    <h1>🏇 うまレース DX 3D</h1>
     <div class="hud">
       <div class="item"><span class="label">第</span><span class="value" id="raceNum">1</span></div>
       <div class="item"><span class="label">距離</span><span class="value" id="distance">1600m</span></div>
       <div class="item"><span class="label">天候</span><span class="value" id="weather">☀️ 晴</span></div>
       <div class="item"><span class="label">所持金</span><span class="value" id="money">¥10,000</span></div>
+      <button class="cam-btn" id="camBtn">🎥 自動</button>
       <button class="toggle-music" id="muteBtn">🔊 音 ON</button>
     </div>
   </header>
@@ -331,6 +370,8 @@
       </div>
       <div class="commentary hide" id="commentary">準備完了。馬を選んで賭けてください。</div>
       <div class="countdown" id="countdown"></div>
+      <div class="loading" id="loading"><div class="spinner"></div><div>3Dコースを生成中…</div></div>
+      <div class="errbox" id="errbox">⚠️ 3Dエンジン (three.js) の読み込みに失敗しました。<br>ネットワーク接続を確認して再読み込みしてください。</div>
 
       <div class="result-modal" id="resultModal">
         <div class="result-card">
@@ -343,6 +384,7 @@
     </div>
   </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 "use strict";
 
@@ -358,16 +400,17 @@ const STATE = {
   weather: { name: "☀️ 晴", muddy: 0 },
   audioOn: true,
   audioCtx: null,
+  autoCam: true,
 };
 
 const HORSE_POOL = [
   { name: "サクラブレイド",     color: "#e91e63", jockey: "#ffeb3b" },
   { name: "カミナリオウ",       color: "#ffc107", jockey: "#1976d2" },
   { name: "ハヤテツバサ",       color: "#3f51b5", jockey: "#f44336" },
-  { name: "アラシノコウテイ",   color: "#4caf50", jockey: "#fff" },
+  { name: "アラシノコウテイ",   color: "#4caf50", jockey: "#ffffff" },
   { name: "ホシノカケラ",       color: "#9c27b0", jockey: "#ff9800" },
   { name: "ユキノセンプウ",     color: "#00bcd4", jockey: "#e91e63" },
-  { name: "ダイヤモンドアロー", color: "#ff5722", jockey: "#000" },
+  { name: "ダイヤモンドアロー", color: "#ff5722", jockey: "#222222" },
   { name: "ゴールデンルナ",     color: "#ffd54a", jockey: "#311b92" },
 ];
 
@@ -394,6 +437,15 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const fmt = n => "¥" + Math.round(n).toLocaleString("ja-JP");
 
+function hexInt(hex) { return parseInt(hex.replace("#", ""), 16); }
+function darkenInt(hex, f) {
+  const n = hexInt(hex);
+  const r = Math.floor(((n >> 16) & 255) * f);
+  const g = Math.floor(((n >> 8) & 255) * f);
+  const b = Math.floor((n & 255) * f);
+  return (r << 16) | (g << 8) | b;
+}
+
 // ============ Audio (WebAudio simple beeps) ============
 function audio() {
   if (!STATE.audioOn) return null;
@@ -415,6 +467,7 @@ function fanfare() {
   if (!STATE.audioOn) return;
   [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.25, "triangle", 0.18), i * 130));
 }
+let gallopAccum = 0;
 function gallopTick() {
   if (!STATE.audioOn) return;
   beep(80 + Math.random() * 30, 0.05, "square", 0.04);
@@ -437,352 +490,645 @@ function makeHorses() {
       jockey: p.jockey,
       style: style,
       speed, stamina, accel, cond,
-      // odds computed later
       odds: 0,
       // race-time
       pos: 0,
       vel: 0,
+      dispVel: 0,
       stam: 100,
       finished: false,
       finishTime: 0,
-      legPhase: Math.random() * Math.PI * 2,
-      bob: 0,
+      gallopPhase: Math.random() * Math.PI * 2,
+      mesh: null,
     };
   });
 }
 
 function computeOdds(horses) {
-  // strength score
   const scores = horses.map(h => h.speed * 0.45 + h.stamina * 0.30 + h.accel * 0.15 + h.cond * 0.10);
   const total = scores.reduce((a, b) => a + b, 0);
   horses.forEach((h, i) => {
     const prob = scores[i] / total;
-    // implied odds with ~20% house edge
     h.odds = clamp(0.8 / prob, 1.2, 99.9);
     h.odds = Math.round(h.odds * 10) / 10;
   });
 }
 
-// ============ Rendering ============
+// =====================================================================
+// ============================ 3D ENGINE ==============================
+// =====================================================================
 const cvs = document.getElementById("canvas");
-const ctx = cvs.getContext("2d");
-let W = 0, H = 0;
-function resize() {
+const THREE_OK = (typeof THREE !== "undefined");
+
+// World tuning
+const LANE_W = 1.9;          // lateral spacing between horses (units)
+const TRACK_HALF = () => (STATE.horses.length * LANE_W) / 2 + 1.4;
+const laneZ = (idx) => (idx - (STATE.horses.length - 1) / 2) * LANE_W;
+
+let scene, camera, renderer;
+let sunLight, hemiLight;
+let trackGroup, horseGroup;
+let dustPool = [], dustTex;
+let rain, rainData = null;
+const camLook = THREE_OK ? new THREE.Vector3(20, 1.3, 0) : null;
+const tmpV = THREE_OK ? new THREE.Vector3() : null;
+
+function init3D() {
+  renderer = new THREE.WebGLRenderer({ canvas: cvs, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0xbfd2e0, 35, 240);
+
+  camera = new THREE.PerspectiveCamera(52, 1, 0.1, 3000);
+  camera.position.set(-10, 6, 16);
+
+  hemiLight = new THREE.HemisphereLight(0xcfe3ff, 0x4a6a3a, 0.75);
+  scene.add(hemiLight);
+
+  sunLight = new THREE.DirectionalLight(0xfff2d5, 1.25);
+  sunLight.position.set(40, 60, 30);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(2048, 2048);
+  const sc = sunLight.shadow.camera;
+  sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45;
+  sc.near = 1; sc.far = 200;
+  sunLight.shadow.bias = -0.0004;
+  scene.add(sunLight);
+  scene.add(sunLight.target);
+
+  // soft round sprite texture for dust
+  dustTex = makeDustTexture();
+  for (let i = 0; i < 140; i++) {
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: dustTex, transparent: true, depthWrite: false, opacity: 0,
+    }));
+    m.visible = false;
+    dustPool.push({ sprite: m, life: 0, vx: 0, vy: 0, vz: 0 });
+    scene.add(m);
+  }
+
+  buildRain();
+  resize3D();
+  window.addEventListener("resize", resize3D);
+}
+
+function resize3D() {
   const r = cvs.getBoundingClientRect();
-  cvs.width = r.width * devicePixelRatio;
-  cvs.height = r.height * devicePixelRatio;
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-  W = r.width; H = r.height;
+  if (r.width === 0 || r.height === 0) return;
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / r.height;
+  camera.updateProjectionMatrix();
 }
-window.addEventListener("resize", resize);
 
-const PX_PER_M = 0.5; // canvas pixels per meter
-let cameraX = 0;
-let particles = [];
+// ---- procedural textures ----
+function makeDustTexture() {
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const x = c.getContext("2d");
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,0.9)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  return t;
+}
+function makeSkyTexture(topHex, botHex) {
+  const c = document.createElement("canvas"); c.width = 8; c.height = 256;
+  const x = c.getContext("2d");
+  const g = x.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, "#" + topHex.toString(16).padStart(6, "0"));
+  g.addColorStop(0.55, "#" + botHex.toString(16).padStart(6, "0"));
+  g.addColorStop(1, "#" + botHex.toString(16).padStart(6, "0"));
+  x.fillStyle = g; x.fillRect(0, 0, 8, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  return t;
+}
+function makeDirtTexture(baseHex) {
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const x = c.getContext("2d");
+  x.fillStyle = "#" + baseHex.toString(16).padStart(6, "0");
+  x.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 2200; i++) {
+    const a = Math.random() * 0.10;
+    x.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${a})` : `rgba(255,235,200,${a})`;
+    const s = Math.random() * 3 + 1;
+    x.fillRect(Math.random() * 256, Math.random() * 256, s, s);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+function makeCrowdTexture() {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 96;
+  const x = c.getContext("2d");
+  x.fillStyle = "#2a3340"; x.fillRect(0, 0, 256, 96);
+  for (let row = 0; row < 7; row++) {
+    for (let col = 0; col < 32; col++) {
+      x.fillStyle = `hsl(${Math.floor(Math.random() * 360)},${50 + Math.random() * 30}%,${45 + Math.random() * 25}%)`;
+      x.beginPath();
+      x.arc(col * 8 + 4, row * 13 + 8, 3, 0, Math.PI * 2); x.fill();
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  return t;
+}
+function makeTextTexture(text, bgHex, fgHex) {
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const x = c.getContext("2d");
+  x.fillStyle = "#" + bgHex.toString(16).padStart(6, "0");
+  x.fillRect(0, 0, 64, 64);
+  x.fillStyle = "#" + fgHex.toString(16).padStart(6, "0");
+  x.font = "bold 44px sans-serif";
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillText(String(text), 32, 36);
+  return new THREE.CanvasTexture(c);
+}
+function makeBannerTexture(text) {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 64;
+  const x = c.getContext("2d");
+  x.fillStyle = "#d12f2f"; x.fillRect(0, 0, 256, 64);
+  x.fillStyle = "#fff"; x.font = "bold 40px sans-serif";
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillText(text, 128, 34);
+  return new THREE.CanvasTexture(c);
+}
 
-function spawnDust(x, y, color) {
-  particles.push({
-    x, y,
-    vx: rand(-0.5, -0.1),
-    vy: rand(-0.3, -1),
-    life: 1,
-    size: rand(2, 5),
-    color,
+// ---- weather application ----
+const WEATHER_LOOK = {
+  "☀️ 晴": { top: 0x244e86, bot: 0xf0a868, sun: 1.3, sunCol: 0xfff2d5, hemi: 0.8, fog: 0xcad9e6, fogFar: 250, dirt: 0xc9a06b, rain: 0 },
+  "⛅ 曇": { top: 0x7d8b9c, bot: 0xc2ccd6, sun: 0.7, sunCol: 0xeef0f4, hemi: 0.6, fog: 0xc2ccd6, fogFar: 210, dirt: 0xbf9a66, rain: 0 },
+  "🌧️ 雨": { top: 0x556270, bot: 0x8b95a0, sun: 0.4, sunCol: 0xc9d2dc, hemi: 0.5, fog: 0x9aa6b0, fogFar: 170, dirt: 0x7a5c44, rain: 0.5 },
+  "⛈️ 重": { top: 0x3c434d, bot: 0x646d78, sun: 0.28, sunCol: 0xbcc6d2, hemi: 0.42, fog: 0x7d858f, fogFar: 140, dirt: 0x6b4f3a, rain: 1.0 },
+};
+function applyWeather() {
+  const w = WEATHER_LOOK[STATE.weather.name] || WEATHER_LOOK["☀️ 晴"];
+  scene.background = makeSkyTexture(w.top, w.bot);
+  sunLight.intensity = w.sun;
+  sunLight.color.setHex(w.sunCol);
+  hemiLight.intensity = w.hemi;
+  scene.fog.color.setHex(w.fog);
+  scene.fog.far = w.fogFar;
+  renderer.setClearColor(w.fog, 1);
+  if (rain) {
+    rain.visible = w.rain > 0;
+    rain.material.opacity = 0.35 * w.rain;
+  }
+}
+
+// ---- track / world ----
+function clearGroup(g) {
+  if (!g) return;
+  g.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+      else o.material.dispose();
+    }
+  });
+  scene.remove(g);
+}
+
+function buildTrack() {
+  clearGroup(trackGroup);
+  trackGroup = new THREE.Group();
+  const len = STATE.raceDistance;          // world units along +X
+  const half = TRACK_HALF();
+  const w = WEATHER_LOOK[STATE.weather.name] || WEATHER_LOOK["☀️ 晴"];
+
+  // infield grass (big ground)
+  const grassMat = new THREE.MeshStandardMaterial({ color: 0x386b34, roughness: 1 });
+  const grass = new THREE.Mesh(new THREE.PlaneGeometry(len + 600, 700), grassMat);
+  grass.rotation.x = -Math.PI / 2;
+  grass.position.set(len / 2, -0.02, 0);
+  grass.receiveShadow = true;
+  trackGroup.add(grass);
+
+  // dirt track
+  const dirtTex = makeDirtTexture(w.dirt);
+  dirtTex.repeat.set((len + 80) / 6, half * 2 / 6);
+  const trackMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 });
+  const track = new THREE.Mesh(new THREE.PlaneGeometry(len + 80, half * 2), trackMat);
+  track.rotation.x = -Math.PI / 2;
+  track.position.set(len / 2, 0.0, 0);
+  track.receiveShadow = true;
+  trackGroup.add(track);
+
+  // rails (inner = +Z infield side, outer = -Z stand side)
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+  [half + 0.1, -half - 0.1].forEach(z => {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(len + 80, 0.12, 0.12), railMat);
+    rail.position.set(len / 2, 0.85, z);
+    trackGroup.add(rail);
+  });
+
+  // start & finish stripe lines on track
+  function stripeLine(xpos) {
+    const grp = new THREE.Group();
+    const n = 14;
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.5, (half * 2) / n * 0.9),
+        new THREE.MeshStandardMaterial({ color: i % 2 ? 0x111111 : 0xffffff, roughness: 0.6 })
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(xpos, 0.03, -half + (i + 0.5) * (half * 2 / n));
+      grp.add(m);
+    }
+    return grp;
+  }
+  trackGroup.add(stripeLine(0));
+  trackGroup.add(stripeLine(len));
+
+  // distance marker poles every 200m (trackside, infield)
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  for (let m = 200; m < len; m += 200) {
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.6, 0.1), poleMat);
+    pole.position.set(m, 0.8, half + 0.5);
+    pole.castShadow = true;
+    trackGroup.add(pole);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.28, 0.06),
+      new THREE.MeshBasicMaterial({ map: makeTextTexture(len - m, 0x222a33, 0xffd54a) }));
+    top.position.set(m, 1.65, half + 0.55);
+    trackGroup.add(top);
+  }
+
+  // ---- finish gantry (arch + GOAL banner) ----
+  const gantry = new THREE.Group();
+  const postMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 });
+  [half + 0.6, -half - 0.6].forEach(z => {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 7, 12), postMat);
+    post.position.set(len, 3.5, z);
+    post.castShadow = true;
+    gantry.add(post);
+  });
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, half * 2 + 1.6), postMat);
+  beam.position.set(len, 7, 0);
+  gantry.add(beam);
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.4, half * 2 + 1.6),
+    new THREE.MeshBasicMaterial({ map: makeBannerTexture("G O A L") }));
+  banner.position.set(len, 6.0, 0);
+  gantry.add(banner);
+  trackGroup.add(gantry);
+
+  // ---- grandstand behind horses (-Z), facing +Z toward camera ----
+  const standLen = len + 120;
+  const crowdTex = makeCrowdTexture();
+  crowdTex.repeat.set(standLen / 6, 1);
+  const standMat = new THREE.MeshStandardMaterial({ map: crowdTex, roughness: 1 });
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(standLen, 16, 8), standMat);
+  stand.position.set(len / 2, 8, -half - 9);
+  stand.receiveShadow = true;
+  trackGroup.add(stand);
+  // roof
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(standLen, 0.6, 11),
+    new THREE.MeshStandardMaterial({ color: 0x2b3440, roughness: 0.8 }));
+  roof.position.set(len / 2, 16.4, -half - 10.5);
+  roof.rotation.x = 0.12;
+  trackGroup.add(roof);
+  // red trim
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(standLen, 0.7, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0xd12f2f }));
+  trim.position.set(len / 2, 15.6, -half - 5.1);
+  trackGroup.add(trim);
+
+  // start gate frame at x=0
+  const gateMat = new THREE.MeshStandardMaterial({ color: 0x3a4555, roughness: 0.6 });
+  const gateBeam = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, half * 2), gateMat);
+  gateBeam.position.set(0, 2.4, 0);
+  trackGroup.add(gateBeam);
+  for (let i = 0; i <= STATE.horses.length; i++) {
+    const z = -half + i * (half * 2 / STATE.horses.length);
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.4, 0.18), gateMat);
+    p.position.set(0, 1.2, z);
+    trackGroup.add(p);
+  }
+
+  scene.add(trackGroup);
+}
+
+// ---- horse model factory ----
+function buildHorseMesh(h) {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: hexInt(h.color), roughness: 0.55 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: darkenInt(h.color, 0.6), roughness: 0.6 });
+  const legMat  = new THREE.MeshStandardMaterial({ color: darkenInt(h.color, 0.72), roughness: 0.7 });
+  const hoofMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5 });
+
+  // body (forward = +X)
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 14), bodyMat);
+  body.scale.set(1.35, 0.66, 0.62);
+  body.position.y = 1.15;
+  body.castShadow = true;
+  g.add(body);
+  // chest bulk
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 12), bodyMat);
+  chest.position.set(1.0, 1.2, 0); chest.castShadow = true;
+  g.add(chest);
+  const rump = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 12), bodyMat);
+  rump.position.set(-1.05, 1.2, 0); rump.castShadow = true;
+  g.add(rump);
+
+  // neck pivot at shoulder
+  const neckPivot = new THREE.Group();
+  neckPivot.position.set(1.15, 1.45, 0);
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.36, 1.05, 12), bodyMat);
+  neck.position.set(0.32, 0.35, 0);
+  neck.rotation.z = -0.9;
+  neck.castShadow = true;
+  neckPivot.add(neck);
+  // mane
+  const mane = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.16, 0.1), darkMat);
+  mane.position.set(0.3, 0.5, 0); mane.rotation.z = -0.9;
+  neckPivot.add(mane);
+  // head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.32, 0.3), bodyMat);
+  head.position.set(0.72, 0.66, 0); head.rotation.z = -0.25; head.castShadow = true;
+  neckPivot.add(head);
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.24), darkMat);
+  muzzle.position.set(1.0, 0.52, 0);
+  neckPivot.add(muzzle);
+  // ears
+  [-0.12, 0.12].forEach(zz => {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.18, 6), bodyMat);
+    ear.position.set(0.6, 0.84, zz);
+    neckPivot.add(ear);
+  });
+  g.add(neckPivot);
+
+  // tail pivot
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-1.35, 1.35, 0);
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.04, 0.95, 8), darkMat);
+  tail.position.set(-0.1, -0.4, 0); tail.rotation.z = 0.5;
+  tailPivot.add(tail);
+  g.add(tailPivot);
+
+  // legs: 4 hip pivots, each with knee pivot
+  const legDefs = [
+    { x: 0.85,  z: 0.34,  off: Math.PI * 1.0 },  // front-right
+    { x: 0.85,  z: -0.34, off: Math.PI * 1.18 }, // front-left
+    { x: -0.9,  z: 0.34,  off: Math.PI * 0.15 }, // back-right
+    { x: -0.9,  z: -0.34, off: 0 },              // back-left
+  ];
+  const legs = [];
+  legDefs.forEach(d => {
+    const hip = new THREE.Group();
+    hip.position.set(d.x, 1.0, d.z);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.1, 0.6, 8), legMat);
+    upper.position.y = -0.3; upper.castShadow = true;
+    hip.add(upper);
+    const knee = new THREE.Group();
+    knee.position.y = -0.6;
+    const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.6, 8), legMat);
+    lower.position.y = -0.3; lower.castShadow = true;
+    knee.add(lower);
+    const hoof = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.18), hoofMat);
+    hoof.position.y = -0.62;
+    knee.add(hoof);
+    hip.add(knee);
+    g.add(hip);
+    legs.push({ hip, knee, off: d.off });
+  });
+
+  // jockey pivot
+  const jockeyPivot = new THREE.Group();
+  jockeyPivot.position.set(0.05, 1.7, 0);
+  const silkMat = new THREE.MeshStandardMaterial({ color: hexInt(h.jockey), roughness: 0.5 });
+  const torso = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), silkMat);
+  torso.scale.set(0.85, 1.0, 0.7);
+  torso.castShadow = true;
+  jockeyPivot.add(torso);
+  // silk stripe
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.6), new THREE.MeshStandardMaterial({ color: darkenInt(h.jockey, 0.5) }));
+  jockeyPivot.add(stripe);
+  // helmet (horse color)
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), bodyMat);
+  helmet.position.set(0.12, 0.42, 0); helmet.castShadow = true;
+  jockeyPivot.add(helmet);
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.34), hoofMat);
+  visor.position.set(0.28, 0.4, 0);
+  jockeyPivot.add(visor);
+  // arms reaching to neck
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 6), silkMat);
+  arm.position.set(0.45, 0.0, 0); arm.rotation.z = Math.PI / 2.3;
+  jockeyPivot.add(arm);
+  jockeyPivot.rotation.z = -0.28; // forward crouch
+  g.add(jockeyPivot);
+
+  // saddle cloth with number (both sides)
+  const clothTex = makeTextTexture(h.num, hexInt(h.color), darkenInt(h.color, 0.25) > 0x888888 ? 0x111111 : 0xffffff);
+  [0.63, -0.63].forEach((zz, i) => {
+    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.6),
+      new THREE.MeshBasicMaterial({ map: clothTex, side: THREE.DoubleSide }));
+    cloth.position.set(-0.2, 1.25, zz);
+    cloth.rotation.y = i ? Math.PI : 0;
+    g.add(cloth);
+  });
+
+  g.scale.setScalar(0.92);
+  g.userData = { legs, neckPivot, tailPivot, jockeyPivot, body, baseY: 0 };
+  return g;
+}
+
+function buildHorses() {
+  clearGroup(horseGroup);
+  horseGroup = new THREE.Group();
+  STATE.horses.forEach(h => {
+    const m = buildHorseMesh(h);
+    m.position.set(0, 0, laneZ(h.idx));
+    m.rotation.y = -Math.PI / 2; // face +X (since model forward is +X local, group default forward... we orient by yaw)
+    // NOTE: model built facing +X already; keep yaw 0 so it travels +X.
+    m.rotation.y = 0;
+    h.mesh = m;
+    horseGroup.add(m);
+  });
+  scene.add(horseGroup);
+}
+
+// ---- dust ----
+function spawnDust(x, z) {
+  const w = WEATHER_LOOK[STATE.weather.name] || WEATHER_LOOK["☀️ 晴"];
+  const col = new THREE.Color(w.dirt).lerp(new THREE.Color(0xffffff), 0.25);
+  for (const d of dustPool) {
+    if (d.life <= 0) {
+      d.sprite.visible = true;
+      d.sprite.position.set(x + rand(-0.2, 0.2), 0.15, z + rand(-0.2, 0.2));
+      const s = rand(0.4, 0.9);
+      d.sprite.scale.set(s, s, s);
+      d.sprite.material.color.copy(col);
+      d.life = 1;
+      d.vx = rand(-2.5, -0.5);
+      d.vy = rand(0.6, 1.8);
+      d.vz = rand(-0.6, 0.6);
+      return;
+    }
+  }
+}
+function updateDust(dt) {
+  for (const d of dustPool) {
+    if (d.life <= 0) continue;
+    d.life -= dt * 1.3;
+    if (d.life <= 0) { d.sprite.visible = false; continue; }
+    d.sprite.position.x += d.vx * dt;
+    d.sprite.position.y += d.vy * dt;
+    d.sprite.position.z += d.vz * dt;
+    d.vy -= 1.5 * dt;
+    const s = d.sprite.scale.x + dt * 1.2;
+    d.sprite.scale.set(s, s, s);
+    d.sprite.material.opacity = clamp(d.life, 0, 1) * 0.6;
+  }
+}
+
+// ---- rain ----
+function buildRain() {
+  const N = 600;
+  const pos = new Float32Array(N * 6); // 2 verts per drop
+  rainData = [];
+  for (let i = 0; i < N; i++) {
+    const x = rand(-28, 28), y = rand(0, 45), z = rand(-28, 28);
+    const len = rand(0.5, 1.1);
+    pos[i * 6] = x; pos[i * 6 + 1] = y; pos[i * 6 + 2] = z;
+    pos[i * 6 + 3] = x + 0.05; pos[i * 6 + 4] = y - len; pos[i * 6 + 5] = z;
+    rainData.push({ len });
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.LineBasicMaterial({ color: 0xbcd2e6, transparent: true, opacity: 0 });
+  rain = new THREE.LineSegments(geo, mat);
+  rain.frustumCulled = false;
+  rain.visible = false;
+  scene.add(rain);
+}
+function updateRain(dt) {
+  if (!rain || !rain.visible) return;
+  rain.position.set(Math.round(camera.position.x), 0, Math.round(camera.position.z));
+  const arr = rain.geometry.attributes.position.array;
+  const fall = 55 * dt;
+  for (let i = 0; i < rainData.length; i++) {
+    const yTop = i * 6 + 1, yBot = i * 6 + 4;
+    arr[yTop] -= fall; arr[yBot] -= fall;
+    if (arr[yTop] < 0) {
+      const ny = rand(35, 46);
+      arr[yTop] = ny; arr[yBot] = ny - rainData[i].len;
+    }
+  }
+  rain.geometry.attributes.position.needsUpdate = true;
+}
+
+// ---- per-frame horse + camera animation ----
+function animateHorses(dt, time) {
+  STATE.horses.forEach(h => {
+    if (!h.mesh) return;
+    const m = h.mesh, u = m.userData;
+    // smoothed display velocity (so finished horses ease to a stop)
+    const targetV = h.finished ? 0 : h.vel;
+    h.dispVel = lerp(h.dispVel, targetV, dt * 3);
+    const spd = h.dispVel;
+
+    // advance gallop cycle by speed
+    h.gallopPhase += (1.6 + spd * 0.75) * dt;
+    const ph = h.gallopPhase;
+    const intensity = clamp(spd / 12, 0, 1);
+    const swing = 0.55 + 0.35 * intensity;
+
+    // legs: swing about Z (fore/aft) + knee bend on recovery
+    u.legs.forEach(L => {
+      const a = ph + L.off;
+      L.hip.rotation.z = Math.sin(a) * swing;
+      L.knee.rotation.z = Math.max(0, Math.cos(a)) * (0.5 + 0.8 * intensity);
+    });
+
+    // body bob + pitch (gather/extend)
+    const bob = Math.abs(Math.sin(ph)) * 0.12 * intensity;
+    m.position.x = h.pos;
+    m.position.y = bob;
+    m.position.z = laneZ(h.idx);
+    u.body.rotation.z = Math.sin(ph * 2) * 0.05 * intensity;
+
+    // neck pump + tail stream
+    u.neckPivot.rotation.z = Math.sin(ph) * 0.08 * intensity;
+    u.tailPivot.rotation.z = 0.2 + Math.sin(time * 6 + h.idx) * 0.12 - intensity * 0.35;
+    u.tailPivot.rotation.x = Math.sin(time * 7 + h.idx) * 0.1;
+
+    // jockey pumping
+    u.jockeyPivot.position.y = 1.7 + Math.abs(Math.sin(ph)) * 0.06 * intensity;
+    u.jockeyPivot.rotation.z = -0.28 + Math.sin(ph) * 0.07 * intensity;
+
+    // hoof dust
+    if (spd > 4 && Math.random() < 0.5 * intensity) {
+      spawnDust(h.pos - 0.6, laneZ(h.idx) + rand(-0.3, 0.3));
+    }
   });
 }
-function updateParticles(dt) {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.x += p.vx; p.y += p.vy;
-    p.vy += 0.04;
-    p.life -= dt * 1.2;
-    if (p.life <= 0) particles.splice(i, 1);
-  }
-}
-function drawParticles() {
-  particles.forEach(p => {
-    ctx.globalAlpha = clamp(p.life, 0, 1) * 0.7;
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x - cameraX, p.y, p.size, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  ctx.globalAlpha = 1;
-}
 
-function drawBackground(time) {
-  // Sky gradient
-  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.6);
-  sky.addColorStop(0, "#3a5d8a");
-  sky.addColorStop(1, "#f0a070");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H * 0.55);
+let camFov = 52;
+function updateCamera(dt, time) {
+  const len = STATE.raceDistance;
+  const sorted = [...STATE.horses].sort((a, b) => b.pos - a.pos);
+  const lead = sorted[0] || { pos: 0, vel: 0 };
+  const lx = lead.pos;
+  const progress = lx / len;
 
-  // Sun
-  ctx.fillStyle = "rgba(255,220,150,0.7)";
-  ctx.beginPath();
-  ctx.arc(W * 0.78, H * 0.18, 36, 0, Math.PI * 2);
-  ctx.fill();
+  let desPos = tmpV, desLook = new THREE.Vector3(), desFov = 52;
 
-  // Far mountains (parallax 0.1)
-  ctx.fillStyle = "#2c3e50";
-  ctx.beginPath();
-  const mtnOff = (cameraX * 0.1) % 200;
-  for (let x = -mtnOff - 200; x < W + 200; x += 200) {
-    ctx.moveTo(x, H * 0.55);
-    ctx.lineTo(x + 100, H * 0.30);
-    ctx.lineTo(x + 200, H * 0.55);
-  }
-  ctx.fill();
-
-  // Near hills (parallax 0.3)
-  ctx.fillStyle = "#1e5837";
-  ctx.beginPath();
-  const hillOff = (cameraX * 0.3) % 160;
-  for (let x = -hillOff - 160; x < W + 160; x += 160) {
-    ctx.moveTo(x, H * 0.62);
-    ctx.quadraticCurveTo(x + 80, H * 0.42, x + 160, H * 0.62);
-  }
-  ctx.lineTo(W, H);
-  ctx.lineTo(0, H);
-  ctx.fill();
-
-  // Grandstand (parallax 0.5)
-  const standOff = (cameraX * 0.5) % 120;
-  for (let x = -standOff - 120; x < W + 120; x += 120) {
-    ctx.fillStyle = "#3a4555";
-    ctx.fillRect(x, H * 0.50, 100, H * 0.13);
-    ctx.fillStyle = "#e74c3c";
-    ctx.fillRect(x, H * 0.50, 100, 6);
-    // tiny crowd dots
-    for (let cy = 0; cy < 4; cy++) {
-      for (let cx = 0; cx < 8; cx++) {
-        ctx.fillStyle = `hsl(${(x + cx * 17 + cy * 31) % 360}, 60%, 55%)`;
-        ctx.fillRect(x + 6 + cx * 12, H * 0.51 + cy * 16, 6, 6);
-      }
-    }
+  if (!STATE.autoCam) {
+    // free side-broadcast: lock to mid-pack from a wide side angle
+    const mid = sorted[Math.floor(sorted.length / 2)] || lead;
+    desPos.set(mid.pos - 2, 7, 22);
+    desLook.set(mid.pos + 2, 1.4, 0);
+    desFov = 46;
+  } else if (!STATE.running) {
+    // pre-race establishing: slow drift across the gate
+    const sway = Math.sin(time * 0.25) * 6;
+    desPos.set(-7 + sway, 5.5, 17);
+    desLook.set(6, 1.4, 0);
+    desFov = 54;
+  } else if (progress > 0.84) {
+    // finish drama: low camera near the goal, looking back at the charge
+    desPos.set(len + 9, 1.9, 12);
+    desLook.set(lx - 2.5, 1.3, 0);
+    desFov = 60;
+  } else if (progress < 0.12) {
+    // explosive start: low 3/4 rear, horses bursting away
+    desPos.set(lx - 8, 2.4, 12);
+    desLook.set(lx + 5, 1.3, 0);
+    desFov = 56;
+  } else {
+    // broadcast 3/4 rear chase
+    desPos.set(lx - 11, 4.4, 11);
+    desLook.set(lx + 5, 1.3, 0);
+    desFov = 50;
   }
 
-  // Inner field (grass)
-  ctx.fillStyle = "#3a7d44";
-  ctx.fillRect(0, H * 0.62, W, H * 0.08);
+  // smooth follow
+  const k = STATE.running ? 0.07 : 0.04;
+  camera.position.lerp(desPos, k);
+  camLook.lerp(desLook, 0.1);
 
-  // Inner rail
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, H * 0.70);
-  ctx.lineTo(W, H * 0.70);
-  ctx.stroke();
+  // speed-based handheld shake
+  const shake = clamp(lead.vel / 14, 0, 1) * (STATE.running ? 0.08 : 0);
+  camera.position.x += (Math.random() - 0.5) * shake;
+  camera.position.y += (Math.random() - 0.5) * shake;
+  camera.lookAt(camLook);
 
-  // Track surface
-  const trackY = H * 0.70;
-  const trackH = H * 0.28;
-  const baseColor = STATE.weather.muddy > 0.15 ? "#6b4f3a" : "#c9a06b";
-  ctx.fillStyle = baseColor;
-  ctx.fillRect(0, trackY, W, trackH);
-
-  // Track texture lines (showing motion)
-  ctx.strokeStyle = "rgba(0,0,0,0.1)";
-  ctx.lineWidth = 1;
-  const stripeOff = cameraX % 40;
-  for (let x = -stripeOff; x < W; x += 40) {
-    ctx.beginPath();
-    ctx.moveTo(x, trackY + 4);
-    ctx.lineTo(x + 20, trackY + trackH - 4);
-    ctx.stroke();
+  camFov = lerp(camFov, desFov, 0.05);
+  if (Math.abs(camera.fov - camFov) > 0.01) {
+    camera.fov = camFov;
+    camera.updateProjectionMatrix();
   }
 
-  // Distance markers (every 200m)
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.font = "bold 10px monospace";
-  const totalPx = STATE.raceDistance * PX_PER_M;
-  for (let m = 0; m <= STATE.raceDistance; m += 200) {
-    const mx = m * PX_PER_M - cameraX + 100;
-    if (mx > -30 && mx < W + 30) {
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(mx, trackY - 8, 2, 8);
-      ctx.fillStyle = "rgba(255,255,255,0.7)";
-      ctx.fillText((STATE.raceDistance - m) + "m", mx + 4, trackY - 1);
-    }
-  }
-
-  // Goal post
-  const goalX = totalPx - cameraX + 100;
-  if (goalX > -50 && goalX < W + 50) {
-    // Pole
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(goalX - 2, trackY - 60, 4, 60);
-    ctx.fillStyle = "#000";
-    ctx.fillRect(goalX - 2, trackY - 55, 4, 6);
-    ctx.fillRect(goalX - 2, trackY - 45, 4, 6);
-    ctx.fillRect(goalX - 2, trackY - 35, 4, 6);
-    // Banner
-    ctx.fillStyle = "#e74c3c";
-    ctx.fillRect(goalX - 20, trackY - 70, 40, 12);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 9px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("GOAL", goalX, trackY - 61);
-    ctx.textAlign = "left";
-    // Finish line on track
-    ctx.fillStyle = "#fff";
-    for (let y = 0; y < trackH; y += 8) {
-      ctx.fillRect(goalX - 2, trackY + y, 4, 4);
-      ctx.fillStyle = ((y / 8) % 2 === 0) ? "#000" : "#fff";
-    }
-  }
-
-  // Start line (only visible at start)
-  if (cameraX < 200) {
-    const startX = 100 - cameraX;
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(startX - 2, trackY, 4, trackH);
-  }
-}
-
-function drawHorse(h, time) {
-  const lanes = STATE.horses.length;
-  const trackY = H * 0.70;
-  const trackH = H * 0.28;
-  const laneH = trackH / lanes;
-  const baseY = trackY + laneH * h.idx + laneH * 0.5 + 4;
-  const screenX = h.pos * PX_PER_M - cameraX + 100;
-  if (screenX < -60 || screenX > W + 60) return;
-
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(screenX, baseY + 14, 22, 4, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  const x = screenX;
-  const speedFactor = clamp(h.vel / 15, 0.3, 1.5);
-  h.legPhase += speedFactor * 0.5;
-  const phase = Math.sin(h.legPhase);
-  const phase2 = Math.sin(h.legPhase + Math.PI);
-  const bob = Math.abs(Math.sin(h.legPhase * 2)) * 1.5;
-  const y = baseY - bob;
-
-  // Tail
-  ctx.strokeStyle = darken(h.color, 0.6);
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(x - 22, y - 4);
-  ctx.quadraticCurveTo(x - 30 + Math.sin(time * 4) * 2, y - 8, x - 36, y + 2);
-  ctx.stroke();
-
-  // Back legs
-  ctx.strokeStyle = darken(h.color, 0.7);
-  ctx.lineWidth = 3;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(x - 14, y + 6);
-  ctx.lineTo(x - 14 + phase * 6, y + 18);
-  ctx.moveTo(x - 8, y + 6);
-  ctx.lineTo(x - 8 + phase2 * 6, y + 18);
-  ctx.stroke();
-
-  // Body
-  ctx.fillStyle = h.color;
-  ctx.beginPath();
-  ctx.ellipse(x, y, 22, 10, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Front legs
-  ctx.strokeStyle = darken(h.color, 0.7);
-  ctx.beginPath();
-  ctx.moveTo(x + 10, y + 6);
-  ctx.lineTo(x + 10 + phase2 * 6, y + 18);
-  ctx.moveTo(x + 16, y + 6);
-  ctx.lineTo(x + 16 + phase * 6, y + 18);
-  ctx.stroke();
-
-  // Neck
-  ctx.fillStyle = h.color;
-  ctx.beginPath();
-  ctx.ellipse(x + 16, y - 8, 6, 11, -0.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Mane
-  ctx.fillStyle = darken(h.color, 0.5);
-  ctx.beginPath();
-  ctx.moveTo(x + 10, y - 10);
-  ctx.lineTo(x + 14, y - 16);
-  ctx.lineTo(x + 17, y - 12);
-  ctx.lineTo(x + 20, y - 16);
-  ctx.lineTo(x + 22, y - 10);
-  ctx.closePath();
-  ctx.fill();
-
-  // Head
-  ctx.fillStyle = h.color;
-  ctx.beginPath();
-  ctx.ellipse(x + 25, y - 14, 8, 5, 0.25, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Eye
-  ctx.fillStyle = "#fff";
-  ctx.beginPath();
-  ctx.arc(x + 27, y - 15, 1.6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#000";
-  ctx.beginPath();
-  ctx.arc(x + 27.5, y - 15, 0.9, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Nostril
-  ctx.fillStyle = "#000";
-  ctx.beginPath();
-  ctx.arc(x + 31, y - 12, 0.7, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Jockey body
-  ctx.fillStyle = h.jockey;
-  ctx.beginPath();
-  ctx.ellipse(x + 2, y - 12, 7, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Stripe
-  ctx.fillStyle = darken(h.jockey, 0.4);
-  ctx.fillRect(x - 1, y - 17, 6, 2);
-
-  // Jockey helmet
-  ctx.fillStyle = h.color;
-  ctx.beginPath();
-  ctx.arc(x + 2, y - 19, 5, Math.PI, 0);
-  ctx.fill();
-  // Helmet visor
-  ctx.fillStyle = "#000";
-  ctx.fillRect(x - 3, y - 19, 10, 1.5);
-
-  // Jockey number on body
-  ctx.fillStyle = "#000";
-  ctx.font = "bold 8px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(h.num, x + 2, y - 9);
-  ctx.textAlign = "left";
-
-  // Spawn dust occasionally
-  if (h.vel > 5 && Math.random() < 0.4) {
-    const dustColor = STATE.weather.muddy > 0.15 ? "#6b4f3a" : "#d4b08a";
-    spawnDust(h.pos * PX_PER_M + 100 - 16, baseY + 14, dustColor);
-  }
-}
-
-function darken(hex, factor) {
-  // hex like "#rrggbb"
-  const m = hex.match(/^#?([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})$/i);
-  if (!m) return hex;
-  const r = Math.floor(parseInt(m[1], 16) * factor);
-  const g = Math.floor(parseInt(m[2], 16) * factor);
-  const b = Math.floor(parseInt(m[3], 16) * factor);
-  return `rgb(${r},${g},${b})`;
+  // keep shadow frustum on the action
+  sunLight.target.position.set(lx, 0, 0);
+  sunLight.position.set(lx + 35, 60, 30);
 }
 
 // ============ Simulation ============
-let raceStartTime = 0;
 let elapsedSec = 0;
-let gallopAccum = 0;
 
 function tickSim(dt) {
   if (!STATE.running) return;
@@ -793,17 +1139,12 @@ function tickSim(dt) {
     if (h.finished) return;
     const t = h.pos / total;
     const styleMul = h.style.curve(t);
-    // weather effect
     const weatherMul = 1 - STATE.weather.muddy * (1 - h.stamina * 0.5);
-    // stamina fatigue
     const stamMul = 0.6 + 0.4 * (h.stam / 100);
-    // target velocity
     const target = 12 * h.speed * h.cond * styleMul * weatherMul * stamMul;
-    // accelerate towards target
     h.vel = lerp(h.vel, target + rand(-0.6, 0.6), dt * 2 * h.accel);
     h.vel = Math.max(0, h.vel);
-    h.pos += h.vel * dt * 10; // scale up so race lasts ~30-50s
-    // stamina decay
+    h.pos += h.vel * dt * 10;
     h.stam -= dt * (3 + (h.vel - 9) * 1.2) * (1 / h.stamina);
     h.stam = clamp(h.stam, 0, 100);
     if (h.pos >= total) {
@@ -813,22 +1154,11 @@ function tickSim(dt) {
     }
   });
 
-  // Camera follows leader
-  const leader = [...STATE.horses].sort((a, b) => b.pos - a.pos)[0];
-  const targetCam = clamp(leader.pos * PX_PER_M - W * 0.55, 0, STATE.raceDistance * PX_PER_M - W + 200);
-  cameraX = lerp(cameraX, targetCam, 0.08);
-
   // Gallop sound
   gallopAccum += dt;
-  if (gallopAccum > 0.12) {
-    gallopAccum = 0;
-    gallopTick();
-  }
+  if (gallopAccum > 0.12) { gallopAccum = 0; gallopTick(); }
 
-  // All finished?
-  if (STATE.horses.every(h => h.finished)) {
-    finishRace();
-  }
+  if (STATE.horses.every(h => h.finished)) finishRace();
 }
 
 // ============ Commentary ============
@@ -932,9 +1262,16 @@ function newRace() {
   STATE.selectedHorse = null;
   STATE.raceDistance = choice(DISTANCES);
   STATE.weather = choice(WEATHERS);
-  cameraX = 0;
   elapsedSec = 0;
-  particles = [];
+  STATE.running = false;
+  if (THREE_OK) {
+    applyWeather();
+    buildTrack();
+    buildHorses();
+    // snap camera to establishing position
+    camera.position.set(-7, 5.5, 17);
+    camLook.set(6, 1.4, 0);
+  }
   renderHud();
   renderHorseList();
   renderPositions();
@@ -955,10 +1292,8 @@ async function startRace() {
   renderHud();
   document.getElementById("startBtn").disabled = true;
 
-  // Resume audio (browser policy)
   if (STATE.audioCtx && STATE.audioCtx.state === "suspended") STATE.audioCtx.resume();
 
-  // Countdown
   for (let n = 3; n >= 1; n--) {
     showCountdown(String(n));
     beep(440 + (3 - n) * 80, 0.2, "triangle", 0.25);
@@ -967,7 +1302,6 @@ async function startRace() {
   showCountdown("GO!");
   beep(880, 0.4, "square", 0.3);
   STATE.running = true;
-  raceStartTime = performance.now();
   elapsedSec = 0;
   lastCommentary = -10;
 }
@@ -983,7 +1317,8 @@ function finishRace() {
   STATE.money += payout;
   fanfare();
   renderHud();
-  showResult(sorted, won, payout);
+  // small delay so the finish camera lands before the modal
+  setTimeout(() => showResult(sorted, won, payout), 1400);
 }
 
 function showResult(sorted, won, payout) {
@@ -1036,30 +1371,51 @@ document.getElementById("muteBtn").addEventListener("click", (e) => {
   e.target.textContent = STATE.audioOn ? "🔊 音 ON" : "🔇 音 OFF";
 });
 
+document.getElementById("camBtn").addEventListener("click", (e) => {
+  STATE.autoCam = !STATE.autoCam;
+  e.target.textContent = STATE.autoCam ? "🎥 自動" : "🎥 横";
+  beep(540, 0.05);
+});
+
 // ============ Main loop ============
 let lastTime = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
+  const time = now / 1000;
 
   tickSim(dt);
-  updateParticles(dt);
   pickComment();
   if (STATE.running) renderPositions();
 
-  ctx.clearRect(0, 0, W, H);
-  drawBackground(now / 1000);
-  // Draw horses sorted by lane so visual order is consistent
-  STATE.horses.forEach(h => drawHorse(h, now / 1000));
-  drawParticles();
+  animateHorses(dt, time);
+  updateDust(dt);
+  updateRain(dt);
+  updateCamera(dt, time);
 
+  renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
 
 // ============ Boot ============
-resize();
-newRace();
-requestAnimationFrame(loop);
+function boot() {
+  if (!THREE_OK) {
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("errbox").style.display = "flex";
+    // Still set up the betting UI so the page isn't dead
+    STATE.horses = makeHorses();
+    computeOdds(STATE.horses);
+    STATE.raceDistance = choice(DISTANCES);
+    STATE.weather = choice(WEATHERS);
+    renderHud(); renderHorseList(); renderPositions();
+    return;
+  }
+  init3D();
+  newRace();
+  document.getElementById("loading").style.display = "none";
+  requestAnimationFrame(loop);
+}
+boot();
 
 </script>
 </body>
