@@ -17,7 +17,7 @@
     --muted: #8aa0b4;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; }
+  html, body { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; }
   body {
     font-family: "Hiragino Sans", "Yu Gothic", "Helvetica Neue", sans-serif;
     background: radial-gradient(ellipse at top, #1e3a5f 0%, var(--bg-deep) 100%);
@@ -25,7 +25,9 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh;
   }
+  button, .chip, .horse-card, .toggle-music, .cam-btn { touch-action: manipulation; }
   header {
     display: flex;
     justify-content: space-between;
@@ -328,6 +330,40 @@
   .sidebar::-webkit-scrollbar { width: 6px; }
   .sidebar::-webkit-scrollbar-track { background: transparent; }
   .sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+  /* ===== Mobile / tablet (stacked layout) ===== */
+  @media (max-width: 860px) {
+    html, body { overflow: auto; height: auto; }
+    body { height: auto; min-height: 100vh; min-height: 100dvh; }
+    header { padding: 8px 12px; flex-wrap: wrap; gap: 6px 10px; }
+    header h1 { font-size: 1.1rem; letter-spacing: 1px; width: 100%; text-align: center; }
+    .hud { width: 100%; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .hud .item { align-items: center; }
+    .hud .value { font-size: 0.95rem; }
+    main {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px;
+      flex: none;
+    }
+    .arena { height: 52vh; height: 52dvh; min-height: 260px; flex: none; }
+    .sidebar { width: 100%; overflow: visible; max-height: none; }
+    .result-card { min-width: 0; width: 92%; max-width: 380px; padding: 22px 20px; }
+    .countdown { font-size: 5rem; }
+    .position-board { font-size: 0.72rem; min-width: 108px; padding: 6px 8px; top: 8px; right: 8px; }
+    .commentary { font-size: 0.8rem; padding: 7px 10px; }
+  }
+  @media (max-width: 480px) {
+    .arena { height: 46vh; height: 46dvh; min-height: 220px; }
+    .hud .label { display: none; }
+    .countdown { font-size: 4rem; }
+    header h1 { font-size: 1rem; }
+  }
+  /* Landscape phones: keep the 3D view dominant */
+  @media (max-width: 860px) and (orientation: landscape) {
+    .arena { height: 78vh; height: 78dvh; }
+  }
 </style>
 </head>
 <body>
@@ -533,9 +569,11 @@ let rain, rainData = null;
 const camLook = THREE_OK ? new THREE.Vector3(20, 1.3, 0) : null;
 const tmpV = THREE_OK ? new THREE.Vector3() : null;
 
+const IS_MOBILE = matchMedia("(max-width: 860px)").matches || ("ontouchstart" in window);
+
 function init3D() {
-  renderer = new THREE.WebGLRenderer({ canvas: cvs, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer = new THREE.WebGLRenderer({ canvas: cvs, antialias: !IS_MOBILE });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputEncoding = THREE.sRGBEncoding;
@@ -552,7 +590,7 @@ function init3D() {
   sunLight = new THREE.DirectionalLight(0xfff2d5, 1.25);
   sunLight.position.set(40, 60, 30);
   sunLight.castShadow = true;
-  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.mapSize.set(IS_MOBILE ? 1024 : 2048, IS_MOBILE ? 1024 : 2048);
   const sc = sunLight.shadow.camera;
   sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45;
   sc.near = 1; sc.far = 200;
@@ -574,6 +612,7 @@ function init3D() {
   buildRain();
   resize3D();
   window.addEventListener("resize", resize3D);
+  window.addEventListener("orientationchange", () => setTimeout(resize3D, 200));
 }
 
 function resize3D() {
