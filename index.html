@@ -536,6 +536,7 @@ function makeHorses() {
       finished: false,
       finishTime: 0,
       gallopPhase: Math.random() * Math.PI * 2,
+      laneBias: rand(-0.25, 0.25),
       mesh: null,
     };
   });
@@ -557,10 +558,71 @@ function computeOdds(horses) {
 const cvs = document.getElementById("canvas");
 const THREE_OK = (typeof THREE !== "undefined");
 
-// World tuning
-const LANE_W = 1.9;          // lateral spacing between horses (units)
-const TRACK_HALF = () => (STATE.horses.length * LANE_W) / 2 + 1.4;
-const laneZ = (idx) => (idx - (STATE.horses.length - 1) / 2) * LANE_W;
+// World tuning  (1 unit = 1 metre)
+const LANE_W = 1.25;          // lateral spacing between horses — tight pack
+const TRACK_HALF = () => (STATE.horses.length * LANE_W) / 2 + 1.6;
+
+// ---- curved centreline: back straight -> 90° corner -> home straight to goal ----
+// Each sample: { x, z, phi (heading angle in X-Z), nx,nz (left/infield normal), s (dist) }
+let CENTER = [];
+let CORNER_START_S = 0, CORNER_END_S = 0, HOME_START_S = 0;
+const CORNER_R = 72;          // corner radius (m)
+
+function buildCenterline() {
+  const len = STATE.raceDistance;
+  const arcLen = CORNER_R * Math.PI / 2;
+  const homeLen = clamp(len * 0.42, 260, 460);
+  const backLen = Math.max(40, len - homeLen - arcLen);
+  CORNER_START_S = backLen;
+  CORNER_END_S = backLen + arcLen;
+  HOME_START_S = CORNER_END_S;
+
+  const ds = 3;
+  CENTER = [];
+  let x = 0, z = 0, phi = -Math.PI / 2, s = 0; // back straight heads -Z, corner turns left to +X
+  const sample = () => CENTER.push({
+    x, z, phi, s,
+    nx: -Math.sin(phi), nz: Math.cos(phi), // left normal = infield side
+  });
+  sample();
+  while (s < len) {
+    const step = Math.min(ds, len - s);
+    if (s >= CORNER_START_S && s < CORNER_END_S) phi += step / CORNER_R; // left turn
+    x += Math.cos(phi) * step;
+    z += Math.sin(phi) * step;
+    s += step;
+    sample();
+  }
+}
+
+function pathAt(dist) {
+  const len = STATE.raceDistance;
+  dist = clamp(dist, 0, len);
+  let lo = 0, hi = CENTER.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (CENTER[mid].s <= dist) lo = mid; else hi = mid - 1; }
+  const a = CENTER[lo], b = CENTER[Math.min(lo + 1, CENTER.length - 1)];
+  const seg = Math.max(1e-6, b.s - a.s);
+  const t = clamp((dist - a.s) / seg, 0, 1);
+  const phi = lerp(a.phi, b.phi, t);
+  return {
+    x: lerp(a.x, b.x, t), z: lerp(a.z, b.z, t), phi,
+    hx: Math.cos(phi), hz: Math.sin(phi),
+    nx: -Math.sin(phi), nz: Math.cos(phi),
+  };
+}
+
+// dynamic lateral offset: tighten + weave so they ride shoulder-to-shoulder, blanket finish late
+function laneOffset(h, progress, time) {
+  const n = STATE.horses.length;
+  const base = (h.idx - (n - 1) / 2) * LANE_W;
+  const conv = lerp(1.0, 0.5, smooth01((progress - 0.55) / 0.45)); // converge to the rail late
+  const weave = Math.sin(time * 1.25 + h.idx * 1.7) * 0.22 * (0.55 + progress);
+  const lim = TRACK_HALF() - 0.7;
+  return clamp(base * conv + weave + (h.laneBias || 0), -lim, lim);
+}
+const smooth01 = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+// yaw so a +X-facing model points along heading (nx,nz)/(hx,hz)
+const headingYaw = (phi) => -phi;
 
 let scene, camera, renderer;
 let sunLight, hemiLight;
@@ -570,6 +632,7 @@ let dustPool = [], dustTex;
 let rain, rainData = null;
 const camLook = THREE_OK ? new THREE.Vector3(20, 1.3, 0) : null;
 const tmpV = THREE_OK ? new THREE.Vector3() : null;
+const tmpV2 = THREE_OK ? new THREE.Vector3() : null;
 
 const IS_MOBILE = matchMedia("(max-width: 860px)").matches || ("ontouchstart" in window);
 
@@ -756,118 +819,145 @@ function clearGroup(g) {
   scene.remove(g);
 }
 
+// orient a box's local +X along a heading (nx,nz) in the X-Z plane
+const yawOf = (vx, vz) => Math.atan2(-vz, vx);
+
 function buildTrack() {
   clearGroup(trackGroup);
   trackGroup = new THREE.Group();
-  const len = STATE.raceDistance;          // world units along +X
+  const len = STATE.raceDistance;
   const half = TRACK_HALF();
   const w = WEATHER_LOOK[STATE.weather.name] || WEATHER_LOOK["☀️ 晴"];
 
-  // infield grass (big ground)
-  const grassMat = new THREE.MeshStandardMaterial({ color: 0x386b34, roughness: 1 });
-  const grass = new THREE.Mesh(new THREE.PlaneGeometry(len + 600, 700), grassMat);
+  // centreline bounding box for ground sizing
+  let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+  CENTER.forEach(c => { minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x); minZ = Math.min(minZ, c.z); maxZ = Math.max(maxZ, c.z); });
+  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+
+  // infield grass (covers everything)
+  const grass = new THREE.Mesh(
+    new THREE.PlaneGeometry((maxX - minX) + 600, (maxZ - minZ) + 600),
+    new THREE.MeshStandardMaterial({ color: 0x386b34, roughness: 1 }));
   grass.rotation.x = -Math.PI / 2;
-  grass.position.set(len / 2, -0.02, 0);
+  grass.position.set(cx, -0.03, cz);
   grass.receiveShadow = true;
   trackGroup.add(grass);
 
-  // dirt track
+  // dirt track ribbon following the centreline
+  const N = CENTER.length;
+  const pos = new Float32Array(N * 2 * 3);
+  const uv = new Float32Array(N * 2 * 2);
+  const index = [];
+  const vAcross = (half * 2) / 6;
+  for (let i = 0; i < N; i++) {
+    const c = CENTER[i];
+    pos[i * 6 + 0] = c.x + c.nx * half; pos[i * 6 + 1] = 0; pos[i * 6 + 2] = c.z + c.nz * half;
+    pos[i * 6 + 3] = c.x - c.nx * half; pos[i * 6 + 4] = 0; pos[i * 6 + 5] = c.z - c.nz * half;
+    uv[i * 4 + 0] = c.s / 6; uv[i * 4 + 1] = 0;
+    uv[i * 4 + 2] = c.s / 6; uv[i * 4 + 3] = vAcross;
+    if (i < N - 1) {
+      const a = i * 2, b = i * 2 + 1, d = (i + 1) * 2, e = (i + 1) * 2 + 1;
+      index.push(a, d, b, b, d, e); // wind so normals face up
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
   const dirtTex = makeDirtTexture(w.dirt);
-  dirtTex.repeat.set((len + 80) / 6, half * 2 / 6);
-  const trackMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 });
-  const track = new THREE.Mesh(new THREE.PlaneGeometry(len + 80, half * 2), trackMat);
-  track.rotation.x = -Math.PI / 2;
-  track.position.set(len / 2, 0.0, 0);
+  const track = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 1 }));
   track.receiveShadow = true;
   trackGroup.add(track);
 
-  // rails (inner = +Z infield side, outer = -Z stand side)
-  const railMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
-  [half + 0.1, -half - 0.1].forEach(z => {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(len + 80, 0.12, 0.12), railMat);
-    rail.position.set(len / 2, 0.85, z);
-    trackGroup.add(rail);
+  // edge rails (white lines following both edges)
+  const railMat = new THREE.LineBasicMaterial({ color: 0xffffff });
+  [1, -1].forEach(sgn => {
+    const pts = CENTER.map(c => new THREE.Vector3(c.x + sgn * c.nx * half, 0.9, c.z + sgn * c.nz * half));
+    trackGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), railMat));
   });
 
-  // start & finish stripe lines on track
-  function stripeLine(xpos) {
-    const grp = new THREE.Group();
-    const n = 14;
+  // start / finish checker stripes across the track
+  function crossStripes(dist) {
+    const c = pathAt(dist);
+    const yaw = yawOf(c.nx, c.nz);
+    const n = 14, segW = (half * 2) / n;
     for (let i = 0; i < n; i++) {
+      const off = -half + (i + 0.5) * segW;
       const m = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.5, (half * 2) / n * 0.9),
-        new THREE.MeshStandardMaterial({ color: i % 2 ? 0x111111 : 0xffffff, roughness: 0.6 })
-      );
+        new THREE.PlaneGeometry(segW * 0.9, 0.6),
+        new THREE.MeshStandardMaterial({ color: i % 2 ? 0x111111 : 0xffffff, roughness: 0.6 }));
       m.rotation.x = -Math.PI / 2;
-      m.position.set(xpos, 0.03, -half + (i + 0.5) * (half * 2 / n));
-      grp.add(m);
+      m.rotation.z = -yaw;
+      m.position.set(c.x + c.nx * off, 0.04, c.z + c.nz * off);
+      trackGroup.add(m);
     }
-    return grp;
   }
-  trackGroup.add(stripeLine(0));
-  trackGroup.add(stripeLine(len));
+  crossStripes(0);
+  crossStripes(len);
 
-  // distance marker poles every 200m (trackside, infield)
+  // distance markers every 200m at the infield rail
   const poleMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
   for (let m = 200; m < len; m += 200) {
+    const c = pathAt(m);
+    const px = c.x + c.nx * (half + 0.5), pz = c.z + c.nz * (half + 0.5);
     const pole = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.6, 0.1), poleMat);
-    pole.position.set(m, 0.8, half + 0.5);
-    pole.castShadow = true;
+    pole.position.set(px, 0.8, pz); pole.castShadow = true;
     trackGroup.add(pole);
-    const top = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.28, 0.06),
-      new THREE.MeshBasicMaterial({ map: makeTextTexture(len - m, 0x222a33, 0xffd54a) }));
-    top.position.set(m, 1.65, half + 0.55);
-    trackGroup.add(top);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.32),
+      new THREE.MeshBasicMaterial({ map: makeTextTexture(len - m, 0x222a33, 0xffd54a), side: THREE.DoubleSide }));
+    sign.position.set(px, 1.7, pz);
+    trackGroup.add(sign);
   }
 
-  // ---- finish gantry (arch + GOAL banner) ----
+  // ---- finish gantry on the home straight (heading +X) ----
+  const F = pathAt(len);
   const gantry = new THREE.Group();
   const postMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 });
-  [half + 0.6, -half - 0.6].forEach(z => {
+  [half + 0.6, -half - 0.6].forEach(o => {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 7, 12), postMat);
-    post.position.set(len, 3.5, z);
-    post.castShadow = true;
+    post.position.set(F.x + F.nx * o, 3.5, F.z + F.nz * o); post.castShadow = true;
     gantry.add(post);
   });
   const beam = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, half * 2 + 1.6), postMat);
-  beam.position.set(len, 7, 0);
+  beam.position.set(F.x, 7, F.z); beam.rotation.y = yawOf(F.nx, F.nz);
   gantry.add(beam);
   const banner = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.4, half * 2 + 1.6),
     new THREE.MeshBasicMaterial({ map: makeBannerTexture("G O A L") }));
-  banner.position.set(len, 6.0, 0);
+  banner.position.set(F.x, 6.0, F.z); banner.rotation.y = yawOf(F.nx, F.nz);
   gantry.add(banner);
   trackGroup.add(gantry);
 
-  // ---- grandstand behind horses (-Z), facing +Z toward camera ----
-  const standLen = len + 120;
+  // ---- grandstand along the home straight (outside / -infield) ----
+  const Hs = pathAt(HOME_START_S), Hf = pathAt(len);
+  const standLen = Math.abs(Hf.x - Hs.x) + 120;
+  const standX = (Hs.x + Hf.x) / 2;
+  const standZ = Hf.z - (half + 9);       // home straight runs +X, infield is +Z, stand on -Z
   const crowdTex = makeCrowdTexture();
   crowdTex.repeat.set(standLen / 6, 1);
-  const standMat = new THREE.MeshStandardMaterial({ map: crowdTex, roughness: 1 });
-  const stand = new THREE.Mesh(new THREE.BoxGeometry(standLen, 16, 8), standMat);
-  stand.position.set(len / 2, 8, -half - 9);
-  stand.receiveShadow = true;
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(standLen, 16, 8),
+    new THREE.MeshStandardMaterial({ map: crowdTex, roughness: 1 }));
+  stand.position.set(standX, 8, standZ); stand.receiveShadow = true;
   trackGroup.add(stand);
-  // roof
   const roof = new THREE.Mesh(new THREE.BoxGeometry(standLen, 0.6, 11),
     new THREE.MeshStandardMaterial({ color: 0x2b3440, roughness: 0.8 }));
-  roof.position.set(len / 2, 16.4, -half - 10.5);
-  roof.rotation.x = 0.12;
+  roof.position.set(standX, 16.4, standZ - 1.5); roof.rotation.x = 0.12;
   trackGroup.add(roof);
-  // red trim
   const trim = new THREE.Mesh(new THREE.BoxGeometry(standLen, 0.7, 0.3),
     new THREE.MeshStandardMaterial({ color: 0xd12f2f }));
-  trim.position.set(len / 2, 15.6, -half - 5.1);
+  trim.position.set(standX, 15.6, standZ + 3.9);
   trackGroup.add(trim);
 
-  // start gate frame at x=0
+  // ---- starting gate across the track at dist 0 ----
+  const S = pathAt(0);
   const gateMat = new THREE.MeshStandardMaterial({ color: 0x3a4555, roughness: 0.6 });
   const gateBeam = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, half * 2), gateMat);
-  gateBeam.position.set(0, 2.4, 0);
+  gateBeam.position.set(S.x, 2.4, S.z); gateBeam.rotation.y = yawOf(S.nx, S.nz);
   trackGroup.add(gateBeam);
   for (let i = 0; i <= STATE.horses.length; i++) {
-    const z = -half + i * (half * 2 / STATE.horses.length);
+    const off = -half + i * (half * 2 / STATE.horses.length);
     const p = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.4, 0.18), gateMat);
-    p.position.set(0, 1.2, z);
+    p.position.set(S.x + S.nx * off, 1.2, S.z + S.nz * off);
     trackGroup.add(p);
   }
 
@@ -1058,7 +1148,9 @@ function buildHorses() {
       catch (e) { console.warn("realistic horse failed, using procedural:", e); HORSE_ASSET = null; }
     }
     if (!m) m = buildHorseMesh(h);
-    m.position.set(h.pos, 0, laneZ(h.idx));
+    const p0 = pathAt(0);
+    m.position.set(p0.x, 0, p0.z);
+    m.rotation.y = headingYaw(p0.phi);
     h.mesh = m;
     horseGroup.add(m);
   });
@@ -1137,6 +1229,7 @@ function updateRain(dt) {
 
 // ---- per-frame horse + camera animation ----
 function animateHorses(dt, time) {
+  const len = STATE.raceDistance;
   STATE.horses.forEach(h => {
     if (!h.mesh) return;
     const m = h.mesh, u = m.userData;
@@ -1144,118 +1237,112 @@ function animateHorses(dt, time) {
     const targetV = h.finished ? 0 : h.vel;
     h.dispVel = lerp(h.dispVel, targetV, dt * 3);
     const spd = h.dispVel;
+    const intensity = clamp(spd / 12, 0, 1);
+
+    // place on the curved track with a dynamic lane offset
+    const progress = h.pos / len;
+    const p = pathAt(h.pos);
+    const off = laneOffset(h, progress, time);
+    const wx = p.x + p.nx * off, wz = p.z + p.nz * off;
+    // steer: face heading, leaning slightly into the lateral motion
+    const yaw = headingYaw(p.phi);
+    m.rotation.y += (((yaw - m.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI) * 0.25;
 
     // ---- realistic (Horse.glb morph-target) branch ----
     if (u.gltf) {
-      // drive the gallop clip speed by velocity (freezes when stopped)
-      u.action.timeScale = clamp(spd * 0.135, 0, 2.4);
+      u.action.timeScale = clamp(spd * 0.135, 0, 2.4); // gallop speed follows velocity
       u.mixer.update(dt);
-      m.position.set(h.pos, 0, laneZ(h.idx));
-      const intensity = clamp(spd / 12, 0, 1);
+      m.position.set(wx, 0, wz);
       h.gallopPhase += (1.6 + spd * 0.75) * dt;
       u.jockeyPivot.position.y = 1.5 + Math.abs(Math.sin(h.gallopPhase)) * 0.05 * intensity;
       u.jockeyPivot.rotation.z = -0.3 + Math.sin(h.gallopPhase) * 0.06 * intensity;
-      if (spd > 4 && Math.random() < 0.5 * intensity) {
-        spawnDust(h.pos - 0.7, laneZ(h.idx) + rand(-0.3, 0.3));
-      }
+      if (spd > 4 && Math.random() < 0.5 * intensity) spawnDust(wx - p.hx * 0.9, wz - p.hz * 0.9);
       return;
     }
 
-    // advance gallop cycle by speed
+    // ---- procedural fallback ----
     h.gallopPhase += (1.6 + spd * 0.75) * dt;
     const ph = h.gallopPhase;
-    const intensity = clamp(spd / 12, 0, 1);
     const swing = 0.55 + 0.35 * intensity;
-
-    // legs: swing about Z (fore/aft) + knee bend on recovery
     u.legs.forEach(L => {
       const a = ph + L.off;
       L.hip.rotation.z = Math.sin(a) * swing;
       L.knee.rotation.z = Math.max(0, Math.cos(a)) * (0.5 + 0.8 * intensity);
     });
-
-    // body bob + pitch (gather/extend)
     const bob = Math.abs(Math.sin(ph)) * 0.12 * intensity;
-    m.position.x = h.pos;
-    m.position.y = bob;
-    m.position.z = laneZ(h.idx);
+    m.position.set(wx, bob, wz);
     u.body.rotation.z = Math.sin(ph * 2) * 0.05 * intensity;
-
-    // neck pump + tail stream
     u.neckPivot.rotation.z = Math.sin(ph) * 0.08 * intensity;
     u.tailPivot.rotation.z = 0.2 + Math.sin(time * 6 + h.idx) * 0.12 - intensity * 0.35;
     u.tailPivot.rotation.x = Math.sin(time * 7 + h.idx) * 0.1;
-
-    // jockey pumping
     u.jockeyPivot.position.y = 1.7 + Math.abs(Math.sin(ph)) * 0.06 * intensity;
     u.jockeyPivot.rotation.z = -0.28 + Math.sin(ph) * 0.07 * intensity;
-
-    // hoof dust
-    if (spd > 4 && Math.random() < 0.5 * intensity) {
-      spawnDust(h.pos - 0.6, laneZ(h.idx) + rand(-0.3, 0.3));
-    }
+    if (spd > 4 && Math.random() < 0.5 * intensity) spawnDust(wx - p.hx * 0.8, wz - p.hz * 0.8);
   });
 }
 
 let camFov = 52;
+// helper: world point = path point + heading*ahead + infieldNormal*side + up*h
+function camPoint(out, P, ahead, side, up) {
+  out.set(P.x + P.hx * ahead + P.nx * side, up, P.z + P.hz * ahead + P.nz * side);
+  return out;
+}
 function updateCamera(dt, time) {
   const len = STATE.raceDistance;
   const sorted = [...STATE.horses].sort((a, b) => b.pos - a.pos);
   const lead = sorted[0] || { pos: 0, vel: 0 };
-  const lx = lead.pos;
-  const progress = lx / len;
+  // frame the bunch: a touch behind the leader so the whole pack is in shot
+  const second = sorted[1] || lead;
+  const frameDist = lead.pos * 0.6 + second.pos * 0.4;
+  const P = pathAt(frameDist);
+  const progress = lead.pos / len;
+  const inCorner = lead.pos > CORNER_START_S - 25 && lead.pos < CORNER_END_S + 35;
 
-  let desPos = tmpV, desLook = new THREE.Vector3(), desFov = 52;
+  const desPos = tmpV, desLook = tmpV2;
+  let desFov = 50;
 
   if (!STATE.autoCam) {
-    // free side-broadcast: lock to mid-pack from a wide side angle
-    const mid = sorted[Math.floor(sorted.length / 2)] || lead;
-    desPos.set(mid.pos - 2, 7, 22);
-    desLook.set(mid.pos + 2, 1.4, 0);
-    desFov = 46;
+    // wide trackside broadcast
+    camPoint(desPos, P, -2, 20, 8);
+    camPoint(desLook, P, 4, 0, 1.4); desFov = 46;
   } else if (!STATE.running) {
-    // pre-race establishing: slow drift across the gate
-    const sway = Math.sin(time * 0.25) * 6;
-    desPos.set(-7 + sway, 5.5, 17);
-    desLook.set(6, 1.4, 0);
-    desFov = 54;
-  } else if (progress > 0.84) {
-    // finish drama: low camera near the goal, looking back at the charge
-    desPos.set(len + 9, 1.9, 12);
-    desLook.set(lx - 2.5, 1.3, 0);
-    desFov = 60;
-  } else if (progress < 0.12) {
-    // explosive start: low 3/4 rear, horses bursting away
-    desPos.set(lx - 8, 2.4, 12);
-    desLook.set(lx + 5, 1.3, 0);
-    desFov = 56;
+    // pre-race: slow drift along the infield rail
+    const sway = Math.sin(time * 0.25) * 5;
+    camPoint(desPos, P, -4, 12 + sway, 5);
+    camPoint(desLook, P, 4, 0, 1.3); desFov = 54;
+  } else if (progress > 0.9) {
+    // finish drama: low, just past the line, looking back at the blanket finish
+    const F = pathAt(len);
+    camPoint(desPos, F, 7, 5, 1.6);
+    camPoint(desLook, P, 1, 0, 1.2); desFov = 58;
+  } else if (inCorner) {
+    // coming off the bend: tight inside-rail sweep, low and close
+    camPoint(desPos, P, -3, 9, 3.0);
+    camPoint(desLook, P, 7, 0, 1.2); desFov = 56;
   } else {
-    // broadcast 3/4 rear chase
-    desPos.set(lx - 11, 4.4, 11);
-    desLook.set(lx + 5, 1.3, 0);
-    desFov = 50;
+    // tight 3/4 rear chase — right on top of the pack
+    camPoint(desPos, P, -9, 6.5, 3.3);
+    camPoint(desLook, P, 6, 0, 1.3); desFov = 50;
   }
 
   // smooth follow
-  const k = STATE.running ? 0.07 : 0.04;
+  const k = STATE.running ? 0.08 : 0.04;
   camera.position.lerp(desPos, k);
-  camLook.lerp(desLook, 0.1);
+  camLook.lerp(desLook, 0.12);
 
-  // speed-based handheld shake
-  const shake = clamp(lead.vel / 14, 0, 1) * (STATE.running ? 0.08 : 0);
+  // speed-based handheld shake (stronger when close/fast for urgency)
+  const shake = clamp(lead.vel / 14, 0, 1) * (STATE.running ? 0.09 : 0);
   camera.position.x += (Math.random() - 0.5) * shake;
   camera.position.y += (Math.random() - 0.5) * shake;
   camera.lookAt(camLook);
 
   camFov = lerp(camFov, desFov, 0.05);
-  if (Math.abs(camera.fov - camFov) > 0.01) {
-    camera.fov = camFov;
-    camera.updateProjectionMatrix();
-  }
+  camera.fov = camFov;
+  camera.updateProjectionMatrix();
 
   // keep shadow frustum on the action
-  sunLight.target.position.set(lx, 0, 0);
-  sunLight.position.set(lx + 35, 60, 30);
+  sunLight.target.position.set(P.x, 0, P.z);
+  sunLight.position.set(P.x + 35, 60, P.z + 30);
 }
 
 // ============ Simulation ============
@@ -1266,13 +1353,19 @@ function tickSim(dt) {
   elapsedSec += dt;
   const total = STATE.raceDistance;
 
+  const leadPos = Math.max(...STATE.horses.map(h => h.pos));
   STATE.horses.forEach(h => {
     if (h.finished) return;
     const t = h.pos / total;
     const styleMul = h.style.curve(t);
     const weatherMul = 1 - STATE.weather.muddy * (1 - h.stamina * 0.5);
     const stamMul = 0.6 + 0.4 * (h.stam / 100);
-    const target = 12 * h.speed * h.cond * styleMul * weatherMul * stamMul;
+    // slipstream: horses just behind the leader get towed along -> tight, jostling pack
+    const gap = leadPos - h.pos;
+    const draft = (gap > 1 && gap < 18) ? 0.10 * (1 - gap / 18) : 0;
+    // rubber-band: keep the field from stringing out so they fight to the line
+    const catchUp = clamp(gap / 120, 0, 0.06);
+    const target = 12 * h.speed * h.cond * styleMul * weatherMul * stamMul * (1 + draft + catchUp);
     h.vel = lerp(h.vel, target + rand(-0.6, 0.6), dt * 2 * h.accel);
     h.vel = Math.max(0, h.vel);
     h.pos += h.vel * dt * 10;
@@ -1396,12 +1489,14 @@ function newRace() {
   elapsedSec = 0;
   STATE.running = false;
   if (THREE_OK) {
+    buildCenterline();
     applyWeather();
     buildTrack();
     buildHorses();
-    // snap camera to establishing position
-    camera.position.set(-7, 5.5, 17);
-    camLook.set(6, 1.4, 0);
+    // snap camera to a pre-race establishing position by the gate
+    const S = pathAt(0);
+    camera.position.set(S.x + S.hx * -4 + S.nx * 12, 5.5, S.z + S.hz * -4 + S.nz * 12);
+    camLook.set(S.x + S.hx * 4, 1.4, S.z + S.hz * 4);
   }
   renderHud();
   renderHorseList();
