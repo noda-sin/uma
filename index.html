@@ -421,6 +421,7 @@
   </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 "use strict";
 
@@ -564,6 +565,7 @@ const laneZ = (idx) => (idx - (STATE.horses.length - 1) / 2) * LANE_W;
 let scene, camera, renderer;
 let sunLight, hemiLight;
 let trackGroup, horseGroup;
+let HORSE_ASSET = null; // { mesh, clip } from Horse.glb, or null -> procedural fallback
 let dustPool = [], dustTex;
 let rain, rainData = null;
 const camLook = THREE_OK ? new THREE.Vector3(20, 1.3, 0) : null;
@@ -621,6 +623,28 @@ function resize3D() {
   renderer.setSize(r.width, r.height, false);
   camera.aspect = r.width / r.height;
   camera.updateProjectionMatrix();
+}
+
+// Load the real (morph-animated) horse model; resolve null on any failure/timeout.
+function loadHorseAsset() {
+  return new Promise(resolve => {
+    if (typeof THREE.GLTFLoader === "undefined") { resolve(null); return; }
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(to); resolve(v); } };
+    const to = setTimeout(() => finish(null), 12000);
+    try {
+      new THREE.GLTFLoader().load(
+        "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Horse.glb",
+        (gltf) => {
+          const mesh = gltf.scene.children[0];
+          if (!mesh || !gltf.animations || !gltf.animations.length) { finish(null); return; }
+          finish({ mesh, clip: gltf.animations[0] });
+        },
+        undefined,
+        () => finish(null)
+      );
+    } catch (e) { finish(null); }
+  });
 }
 
 // ---- procedural textures ----
@@ -723,7 +747,7 @@ function applyWeather() {
 function clearGroup(g) {
   if (!g) return;
   g.traverse(o => {
-    if (o.geometry) o.geometry.dispose();
+    if (o.geometry && !o.userData.keepGeometry) o.geometry.dispose();
     if (o.material) {
       if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
       else o.material.dispose();
@@ -934,43 +958,93 @@ function buildHorseMesh(h) {
     legs.push({ hip, knee, off: d.off });
   });
 
-  // jockey pivot
-  const jockeyPivot = new THREE.Group();
+  // jockey
+  const jockeyPivot = buildJockey(h);
   jockeyPivot.position.set(0.05, 1.7, 0);
+  g.add(jockeyPivot);
+
+  // saddle cloth with number (both sides)
+  addSaddleCloth(g, h, -0.2, 1.25, 0.63, 0.7, 0.6);
+
+  g.scale.setScalar(0.92);
+  g.userData = { legs, neckPivot, tailPivot, jockeyPivot, body, baseY: 0 };
+  return g;
+}
+
+// reusable jockey rig (silks = identifying color, helmet = horse color)
+function buildJockey(h) {
+  const jockeyPivot = new THREE.Group();
   const silkMat = new THREE.MeshStandardMaterial({ color: hexInt(h.jockey), roughness: 0.5 });
+  const helmMat = new THREE.MeshStandardMaterial({ color: hexInt(h.color), roughness: 0.45 });
+  const hoofMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5 });
   const torso = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), silkMat);
   torso.scale.set(0.85, 1.0, 0.7);
   torso.castShadow = true;
   jockeyPivot.add(torso);
-  // silk stripe
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.6), new THREE.MeshStandardMaterial({ color: darkenInt(h.jockey, 0.5) }));
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.6),
+    new THREE.MeshStandardMaterial({ color: darkenInt(h.jockey, 0.5) }));
   jockeyPivot.add(stripe);
-  // helmet (horse color)
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), bodyMat);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), helmMat);
   helmet.position.set(0.12, 0.42, 0); helmet.castShadow = true;
   jockeyPivot.add(helmet);
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.34), hoofMat);
   visor.position.set(0.28, 0.4, 0);
   jockeyPivot.add(visor);
-  // arms reaching to neck
   const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 6), silkMat);
   arm.position.set(0.45, 0.0, 0); arm.rotation.z = Math.PI / 2.3;
   jockeyPivot.add(arm);
   jockeyPivot.rotation.z = -0.28; // forward crouch
-  g.add(jockeyPivot);
+  return jockeyPivot;
+}
 
-  // saddle cloth with number (both sides)
-  const clothTex = makeTextTexture(h.num, hexInt(h.color), darkenInt(h.color, 0.25) > 0x888888 ? 0x111111 : 0xffffff);
-  [0.63, -0.63].forEach((zz, i) => {
-    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.6),
+function addSaddleCloth(g, h, x, y, zz, w, hh) {
+  const dark = (((hexInt(h.color) >> 16) & 255) + ((hexInt(h.color) >> 8) & 255) + (hexInt(h.color) & 255)) > 0x180;
+  const clothTex = makeTextTexture(h.num, hexInt(h.color), dark ? 0x111111 : 0xffffff);
+  [zz, -zz].forEach((z, i) => {
+    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(w, hh),
       new THREE.MeshBasicMaterial({ map: clothTex, side: THREE.DoubleSide }));
-    cloth.position.set(-0.2, 1.25, zz);
+    cloth.position.set(x, y, z);
     cloth.rotation.y = i ? Math.PI : 0;
     g.add(cloth);
   });
+}
 
-  g.scale.setScalar(0.92);
-  g.userData = { legs, neckPivot, tailPivot, jockeyPivot, body, baseY: 0 };
+// ---- realistic horse from three.js Horse.glb (morph-target gallop) ----
+const COAT_PALETTE = [0x5a3a22, 0x7a4a2a, 0x352318, 0x1d1a17, 0x9a948c, 0xb98b46];
+const GLB_SCALE = 1.95 / 182.3;   // normalize model height (~182u) to ~1.95 world units
+const GLB_OFF = { x: 2.05, y: 0.8, z: -26.25 }; // bbox center X, feet Y, center Z (model units)
+
+function buildRealisticHorse(h) {
+  const g = new THREE.Group();
+  const mesh = HORSE_ASSET.mesh.clone();
+  mesh.material = HORSE_ASSET.mesh.material.clone();
+  mesh.material.color.setHex(COAT_PALETTE[h.idx % COAT_PALETTE.length]);
+  mesh.material.roughness = 0.62;
+  mesh.material.metalness = 0.0;
+  mesh.castShadow = true;
+  mesh.userData.keepGeometry = true; // geometry is shared with the template — never dispose it
+
+  // center body & drop feet to ground (model-space units), then scale + face +X
+  mesh.position.set(-GLB_OFF.x, -GLB_OFF.y, -GLB_OFF.z);
+  const model = new THREE.Group();
+  model.add(mesh);
+  model.scale.setScalar(GLB_SCALE);
+  model.rotation.y = Math.PI / 2; // model forward (+Z) -> world +X
+  g.add(model);
+
+  // rider + numbered saddle cloth (world units, sit over the withers)
+  const jockeyPivot = buildJockey(h);
+  jockeyPivot.position.set(0.35, 1.5, 0);
+  jockeyPivot.scale.setScalar(0.95);
+  g.add(jockeyPivot);
+  addSaddleCloth(g, h, -0.1, 1.2, 0.46, 0.7, 0.6);
+
+  // gallop animation
+  const mixer = new THREE.AnimationMixer(mesh);
+  const action = mixer.clipAction(HORSE_ASSET.clip);
+  action.play();
+
+  g.userData = { gltf: true, mixer, action, jockeyPivot };
   return g;
 }
 
@@ -978,11 +1052,13 @@ function buildHorses() {
   clearGroup(horseGroup);
   horseGroup = new THREE.Group();
   STATE.horses.forEach(h => {
-    const m = buildHorseMesh(h);
-    m.position.set(0, 0, laneZ(h.idx));
-    m.rotation.y = -Math.PI / 2; // face +X (since model forward is +X local, group default forward... we orient by yaw)
-    // NOTE: model built facing +X already; keep yaw 0 so it travels +X.
-    m.rotation.y = 0;
+    let m = null;
+    if (HORSE_ASSET) {
+      try { m = buildRealisticHorse(h); }
+      catch (e) { console.warn("realistic horse failed, using procedural:", e); HORSE_ASSET = null; }
+    }
+    if (!m) m = buildHorseMesh(h);
+    m.position.set(h.pos, 0, laneZ(h.idx));
     h.mesh = m;
     horseGroup.add(m);
   });
@@ -1068,6 +1144,22 @@ function animateHorses(dt, time) {
     const targetV = h.finished ? 0 : h.vel;
     h.dispVel = lerp(h.dispVel, targetV, dt * 3);
     const spd = h.dispVel;
+
+    // ---- realistic (Horse.glb morph-target) branch ----
+    if (u.gltf) {
+      // drive the gallop clip speed by velocity (freezes when stopped)
+      u.action.timeScale = clamp(spd * 0.135, 0, 2.4);
+      u.mixer.update(dt);
+      m.position.set(h.pos, 0, laneZ(h.idx));
+      const intensity = clamp(spd / 12, 0, 1);
+      h.gallopPhase += (1.6 + spd * 0.75) * dt;
+      u.jockeyPivot.position.y = 1.5 + Math.abs(Math.sin(h.gallopPhase)) * 0.05 * intensity;
+      u.jockeyPivot.rotation.z = -0.3 + Math.sin(h.gallopPhase) * 0.06 * intensity;
+      if (spd > 4 && Math.random() < 0.5 * intensity) {
+        spawnDust(h.pos - 0.7, laneZ(h.idx) + rand(-0.3, 0.3));
+      }
+      return;
+    }
 
     // advance gallop cycle by speed
     h.gallopPhase += (1.6 + spd * 0.75) * dt;
@@ -1437,7 +1529,7 @@ function loop(now) {
 }
 
 // ============ Boot ============
-function boot() {
+async function boot() {
   if (!THREE_OK) {
     document.getElementById("loading").style.display = "none";
     document.getElementById("errbox").style.display = "flex";
@@ -1450,6 +1542,9 @@ function boot() {
     return;
   }
   init3D();
+  const loadMsg = document.querySelector("#loading div:last-child");
+  if (loadMsg) loadMsg.textContent = "リアルな馬を読み込み中…";
+  HORSE_ASSET = await loadHorseAsset();   // null -> graceful procedural fallback
   newRace();
   document.getElementById("loading").style.display = "none";
   requestAnimationFrame(loop);
